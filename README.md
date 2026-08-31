@@ -6,6 +6,8 @@
 
 Este repositório é o "frontend" do Promogram — mas em vez de uma interface web, a experiência do usuário acontece **dentro do próprio Telegram**, através de um bot com menus e botões.
 
+[![Acesse o Bot](https://img.shields.io/badge/Telegram-Acessar%20Bot-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/promo_hubs_ofertas_bot)
+
 [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Vercel](https://img.shields.io/badge/Deploy-Vercel-000000?logo=vercel&logoColor=white)](https://vercel.com/)
 [![Telegram Bot API](https://img.shields.io/badge/Telegram-Bot%20API-26A5E4?logo=telegram&logoColor=white)](https://core.telegram.org/bots/api)
