@@ -41,7 +41,7 @@ def enviar_mensagem(chat_id, texto, teclado=None, parse_mode="HTML"):
         "chat_id": chat_id,
         "text": texto,
         "parse_mode": parse_mode,
-        "disable_web_page_preview": True,
+        "disable_web_page_preview": False,
     }
     if teclado:
         payload["reply_markup"] = teclado
