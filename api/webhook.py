@@ -103,9 +103,6 @@ def montar_texto_produtos(produtos):
         return "Nenhuma oferta disponível no momento. Volte mais tarde! ⏳"
     linhas = ["🛒 <b>Ofertas em destaque</b>\n"]
     for p in produtos:
-        if p.get("imagem"):
-            linhas.append(f'<a href="{p["imagem"]}">&#8203;</a>')
-            
         linhas.append(f"🔹 <b>{p.get('nome') or 'Produto'}</b>")
         preco_txt = formatar_preco(p.get("preco"))
         if p.get("preco_parcelado"):
