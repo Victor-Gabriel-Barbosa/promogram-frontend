@@ -54,7 +54,7 @@ def editar_mensagem(chat_id, message_id, texto, teclado=None, parse_mode="HTML")
         "message_id": message_id,
         "text": texto,
         "parse_mode": parse_mode,
-        "disable_web_page_preview": True,
+        "disable_web_page_preview": False,
     }
     if teclado:
         payload["reply_markup"] = teclado
@@ -110,9 +110,9 @@ def montar_texto_produtos(produtos):
         preco_txt = formatar_preco(p.get("preco"))
         if p.get("preco_parcelado"):
             preco_txt += f" (ou parcelado {formatar_preco(p['preco_parcelado'])})"
-        linhas.append(f"💰 {preco_txt}")
+        linhas.append(f"💵 {preco_txt}")
         if p.get("cupom"):
-            linhas.append(f"🏷️ Cupom: <code>{p['cupom']}</code>")
+            linhas.append(f"🎟️ Cupom: <code>{p['cupom']}</code>")
         if p.get("link"):
             linhas.append(f"🔗 <a href=\"{p['link']}\">Ver oferta</a>")
         linhas.append("")
@@ -122,7 +122,7 @@ def montar_texto_produtos(produtos):
 def montar_texto_cupons(cupons):
     if not cupons:
         return "Nenhum cupom disponível no momento. Volte mais tarde! 🕐"
-    linhas = ["🏷️ <b>Cupons em destaque</b>\n"]
+    linhas = ["🎟️ <b>Cupons em destaque</b>\n"]
     for c in cupons:
         linhas.append(f"🔹 <b>{c.get('nome') or 'Cupom'}</b>")
         if c.get("codigo"):
@@ -151,7 +151,7 @@ def teclado_menu_principal():
     return {
         "inline_keyboard": [
             [{"text": "🛒 Produtos", "callback_data": "produtos:0"}],
-            [{"text": "🏷️ Cupons", "callback_data": "cupons:0"}],
+            [{"text": "🎟️ Cupons", "callback_data": "cupons:0"}],
             [{"text": "❓ Ajuda", "callback_data": "ajuda"}],
             [{"text": "📞 Contato", "callback_data": "contato"}],
         ]
