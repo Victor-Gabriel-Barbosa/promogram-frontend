@@ -100,16 +100,19 @@ def formatar_preco(valor):
 
 def montar_texto_produtos(produtos):
     if not produtos:
-        return "Nenhuma oferta disponível no momento. Volte mais tarde! 🕐"
+        return "Nenhuma oferta disponível no momento. Volte mais tarde! ⏳"
     linhas = ["🛒 <b>Ofertas em destaque</b>\n"]
     for p in produtos:
+        if p.get("imagem"):
+            linhas.append(f'<a href="{p["imagem"]}">&#8203;</a>')
+            
         linhas.append(f"🔹 <b>{p.get('nome') or 'Produto'}</b>")
         preco_txt = formatar_preco(p.get("preco"))
         if p.get("preco_parcelado"):
             preco_txt += f" (ou parcelado {formatar_preco(p['preco_parcelado'])})"
         linhas.append(f"💰 {preco_txt}")
         if p.get("cupom"):
-            linhas.append(f"🎟️ Cupom: <code>{p['cupom']}</code>")
+            linhas.append(f"🏷️ Cupom: <code>{p['cupom']}</code>")
         if p.get("link"):
             linhas.append(f"🔗 <a href=\"{p['link']}\">Ver oferta</a>")
         linhas.append("")
@@ -119,7 +122,7 @@ def montar_texto_produtos(produtos):
 def montar_texto_cupons(cupons):
     if not cupons:
         return "Nenhum cupom disponível no momento. Volte mais tarde! 🕐"
-    linhas = ["🎟️ <b>Cupons em destaque</b>\n"]
+    linhas = ["🏷️ <b>Cupons em destaque</b>\n"]
     for c in cupons:
         linhas.append(f"🔹 <b>{c.get('nome') or 'Cupom'}</b>")
         if c.get("codigo"):
@@ -138,17 +141,17 @@ def teclado_paginacao(tipo, skip):
     nav = []
     if skip > 0:
         nav.append(
-            {"text": "⬅️ Anterior", "callback_data": f"{tipo}:{max(0, skip - ITENS_POR_PAGINA)}"}
+            {"text": "❮ Anterior", "callback_data": f"{tipo}:{max(0, skip - ITENS_POR_PAGINA)}"}
         )
-    nav.append({"text": "Próximo ➡️", "callback_data": f"{tipo}:{skip + ITENS_POR_PAGINA}"})
-    return {"inline_keyboard": [nav, [{"text": "🏠 Menu", "callback_data": "menu"}]]}
+    nav.append({"text": "Próximo ❯", "callback_data": f"{tipo}:{skip + ITENS_POR_PAGINA}"})
+    return {"inline_keyboard": [nav, [{"text": "◀️ Menu", "callback_data": "menu"}]]}
 
 
 def teclado_menu_principal():
     return {
         "inline_keyboard": [
             [{"text": "🛒 Produtos", "callback_data": "produtos:0"}],
-            [{"text": "🎟️ Cupons", "callback_data": "cupons:0"}],
+            [{"text": "🏷️ Cupons", "callback_data": "cupons:0"}],
             [{"text": "❓ Ajuda", "callback_data": "ajuda"}],
             [{"text": "📞 Contato", "callback_data": "contato"}],
         ]
@@ -213,10 +216,10 @@ def tratar_callback(callback_query):
         editar_mensagem(chat_id, message_id, TEXTO_START, teclado_menu_principal())
         return
     if data == "ajuda":
-        editar_mensagem(chat_id, message_id, TEXTO_AJUDA, {"inline_keyboard": [[{"text": "🏠 Menu", "callback_data": "menu"}]]})
+        editar_mensagem(chat_id, message_id, TEXTO_AJUDA, {"inline_keyboard": [[{"text": "◀️ Menu", "callback_data": "menu"}]]})
         return
     if data == "contato":
-        editar_mensagem(chat_id, message_id, TEXTO_CONTATO, {"inline_keyboard": [[{"text": "🏠 Menu", "callback_data": "menu"}]]})
+        editar_mensagem(chat_id, message_id, TEXTO_CONTATO, {"inline_keyboard": [[{"text": "◀️ Menu", "callback_data": "menu"}]]})
         return
 
     tipo, _, skip_str = data.partition(":")
