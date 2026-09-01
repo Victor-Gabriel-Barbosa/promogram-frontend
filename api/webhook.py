@@ -57,24 +57,9 @@ LOTE_BRUTO = max(ITENS_POR_PAGINA * 3, 15)
 MAX_TENTATIVAS_PAGINACAO = 10
 TAMANHO_MAX_FILTRO = 60
 
-TEXTO_BUSCA_PRODUTO = (
-    "🔎 <b>Buscar produto</b>\\n\\n"
-    "Digite o nome do produto que deseja buscar e responda esta mensagem."
-)
-
-TEXTO_BUSCA_CUPOM = (
-    "🔎 <b>Buscar cupom</b>\\n\\n"
-    "Digite o nome do cupom que deseja buscar e responda esta mensagem."
-)
-
 MSG_ERRO_API = "⚠️ Não consegui buscar as informações agora. Tente novamente em instantes."
 
 sessao = requests.Session()
-
-# Guarda a mensagem do bot que representa o menu atual de cada chat.
-# Em ambiente serverless, isso funciona enquanto a instância estiver aquecida.
-# Para persistência entre cold starts, o ideal é salvar esse ID em banco/Redis.
-ultima_mensagem_menu = {}
 
 
 def tg_request(method: str, payload: dict) -> dict:
@@ -114,63 +99,11 @@ def editar_mensagem(chat_id, message_id, texto, teclado=None, parse_mode="HTML")
     return tg_request("editMessageText", payload)
 
 
-def mostrar_no_menu(chat_id, texto, teclado=None, parse_mode="HTML"):
-    """
-    Reaproveita a última mensagem do bot usada como menu.
-    Se não houver uma mensagem conhecida (por exemplo, após cold start),
-    cria uma nova e passa a controlá-la.
-    """
-    message_id = ultima_mensagem_menu.get(chat_id)
-
-    if message_id:
-        resposta = editar_mensagem(
-            chat_id,
-            message_id,
-            texto,
-            teclado,
-            parse_mode,
-        )
-        if resposta.get("ok"):
-            return resposta
-
-        # A mensagem pode ter sido apagada ou o ID pode ter expirado.
-        ultima_mensagem_menu.pop(chat_id, None)
-
-    resposta = enviar_mensagem(chat_id, texto, teclado, parse_mode)
-    if resposta.get("ok") and resposta.get("result", {}).get("message_id"):
-        ultima_mensagem_menu[chat_id] = resposta["result"]["message_id"]
-
-    return resposta
-
-
 def responder_callback(callback_query_id, texto=None):
     payload = {"callback_query_id": callback_query_id}
     if texto:
         payload["text"] = texto
     return tg_request("answerCallbackQuery", payload)
-
-
-def teclado_force_reply(placeholder):
-    return {
-        "force_reply": True,
-        "input_field_placeholder": placeholder,
-        "selective": True,
-    }
-
-
-def mostrar_busca(chat_id, tipo):
-    if tipo == "produtos":
-        texto = TEXTO_BUSCA_PRODUTO
-        placeholder = "Ex.: teclado"
-    else:
-        texto = TEXTO_BUSCA_CUPOM
-        placeholder = "Ex.: frete grátis"
-
-    return enviar_mensagem(
-        chat_id,
-        texto,
-        teclado_force_reply(placeholder),
-    )
 
 
 def _buscar_raw(endpoint, skip, limit, nome=None):
@@ -299,6 +232,7 @@ def teclado_paginacao(tipo, skip, tem_proxima, filtro=None):
             }
         )
     linhas_botoes = [nav] if nav else []
+    linhas_botoes.append([{"text": "🔎 Buscar", "callback_data": f"buscar_{tipo}"}])
     linhas_botoes.append([{"text": "◀️ Menu", "callback_data": "menu"}])
     return {"inline_keyboard": linhas_botoes}
 
@@ -307,13 +241,42 @@ def teclado_menu_principal():
     return {
         "inline_keyboard": [
             [{"text": "🛍️ Produtos", "callback_data": "produtos:0"}],
-            [{"text": "🔎 Buscar produto", "callback_data": "buscar:produtos"}],
             [{"text": "🎟️ Cupons", "callback_data": "cupons:0"}],
-            [{"text": "🔎 Buscar cupom", "callback_data": "buscar:cupons"}],
             [{"text": "ℹ️ Ajuda", "callback_data": "ajuda"}],
             [{"text": "📞 Contato", "callback_data": "contato"}],
         ]
     }
+
+
+MARCADOR_BUSCA = "🔎 Buscar em"
+
+
+def texto_prompt_busca(tipo):
+    rotulo = "Produtos" if tipo == "produtos" else "Cupons"
+    return (
+        f"{MARCADOR_BUSCA} <b>{rotulo}</b>\n\n"
+        "Responda esta mensagem com o termo que deseja buscar."
+    )
+
+
+def solicitar_busca(chat_id, tipo):
+    """Envia o prompt com ForceReply. A resposta do usuário virá com
+    'reply_to_message' apontando pra essa mensagem, o que nos dá o
+    message_id necessário pra editar e mostrar o resultado no lugar dela."""
+    teclado = {
+        "force_reply": True,
+        "input_field_placeholder": "Digite o termo da busca...",
+        "selective": True,
+    }
+    return enviar_mensagem(chat_id, texto_prompt_busca(tipo), teclado)
+
+
+def eh_prompt_busca(texto):
+    return bool(texto) and texto.startswith(MARCADOR_BUSCA)
+
+
+def tipo_do_prompt_busca(texto):
+    return "cupons" if "Cupons" in texto else "produtos"
 
 
 TEXTO_START = (
@@ -335,60 +298,12 @@ TEXTO_AJUDA = (
     "<code>/produtos tênis</code> ou <code>/cupons frete grátis</code>\n"
     "• Toque em 'Ver oferta' ou 'Ver cupom' para ir direto ao link\n"
     "• Use os botões Anterior/Próximo para navegar entre as páginas "
-    "(o filtro de busca é mantido)"
+    "(o filtro de busca é mantido)\n"
+    "• Toque em '🔎 Buscar' e responda com o termo desejado pra "
+    "pesquisar sem precisar digitar o comando"
 )
 
 TEXTO_CONTATO = f"📞 Precisa de ajuda? Fale com o suporte: {CONTATO_SUPORTE}"
-
-
-def tratar_resposta_busca(msg):
-    """
-    Processa uma resposta de texto a uma mensagem de busca enviada com
-    ForceReply. Não depende de memória da instância da Vercel.
-
-    Retorna True quando a mensagem foi reconhecida como resposta de busca.
-    """
-    reply = msg.get("reply_to_message")
-    if not reply or not reply.get("from", {}).get("is_bot"):
-        return False
-
-    texto_busca = (msg.get("text") or "").strip()
-    if not texto_busca:
-        return False
-
-    texto_original = reply.get("text") or ""
-    chat_id = msg["chat"]["id"]
-    message_id = reply.get("message_id")
-
-    tipo = None
-    if "🔎 <b>Buscar produto</b>" in texto_original:
-        tipo = "produtos"
-    elif "🔎 <b>Buscar cupom</b>" in texto_original:
-        tipo = "cupons"
-
-    if tipo is None or not message_id:
-        return False
-
-    filtro = texto_busca[:TAMANHO_MAX_FILTRO]
-
-    buscar = buscar_produtos if tipo == "produtos" else buscar_cupons
-    montar_texto = montar_texto_produtos if tipo == "produtos" else montar_texto_cupons
-
-    try:
-        itens, tem_proxima = buscar(0, nome=filtro)
-    except requests.RequestException:
-        logger.exception("Erro ao buscar %s por resposta do usuário", tipo)
-        editar_mensagem(chat_id, message_id, MSG_ERRO_API)
-        return True
-
-    editar_mensagem(
-        chat_id,
-        message_id,
-        montar_texto(itens, filtro),
-        teclado_paginacao(tipo, 0, tem_proxima, filtro),
-    )
-
-    return True
 
 
 def tratar_comando(chat_id, texto):
@@ -397,27 +312,27 @@ def tratar_comando(chat_id, texto):
     filtro = partes[1].strip()[:TAMANHO_MAX_FILTRO] if len(partes) > 1 and partes[1].strip() else None
 
     if comando == "/start":
-        mostrar_no_menu(chat_id, TEXTO_START, teclado_menu_principal())
-    elif comando in ("/produto", "/produtos"):
+        enviar_mensagem(chat_id, TEXTO_START, teclado_menu_principal())
+    elif comando == "/produtos":
         try:
             produtos, tem_proxima = buscar_produtos(0, nome=filtro)
         except requests.RequestException:
             logger.exception("Erro ao buscar produtos")
-            mostrar_no_menu(chat_id, MSG_ERRO_API)
+            enviar_mensagem(chat_id, MSG_ERRO_API)
             return
-        mostrar_no_menu(
+        enviar_mensagem(
             chat_id,
             montar_texto_produtos(produtos, filtro),
             teclado_paginacao("produtos", 0, tem_proxima, filtro),
         )
-    elif comando in ("/cupom", "/cupons"):
+    elif comando == "/cupons":
         try:
             cupons, tem_proxima = buscar_cupons(0, nome=filtro)
         except requests.RequestException:
             logger.exception("Erro ao buscar cupons")
-            mostrar_no_menu(chat_id, MSG_ERRO_API)
+            enviar_mensagem(chat_id, MSG_ERRO_API)
             return
-        mostrar_no_menu(
+        enviar_mensagem(
             chat_id,
             montar_texto_cupons(cupons, filtro),
             teclado_paginacao("cupons", 0, tem_proxima, filtro),
@@ -459,27 +374,10 @@ def tratar_callback(callback_query):
         )
         responder_callback(callback_id)
         return
-
-    if data in ("buscar:produtos", "buscar:cupons"):
-        tipo_busca = data.split(":", 1)[1]
-
-        # O menu vira a própria solicitação de busca.
-        if tipo_busca == "produtos":
-            texto_busca = TEXTO_BUSCA_PRODUTO
-            placeholder = "Ex.: teclado"
-        else:
-            texto_busca = TEXTO_BUSCA_CUPOM
-            placeholder = "Ex.: frete grátis"
-
-        # ForceReply precisa ser anexado à mensagem. Como editMessageText
-        # aceita reply_markup, a mesma mensagem continua tendo o mesmo ID.
-        editar_mensagem(
-            chat_id,
-            message_id,
-            texto_busca,
-            teclado_force_reply(placeholder),
-        )
+    if data in ("buscar_produtos", "buscar_cupons"):
+        tipo_busca = "produtos" if data == "buscar_produtos" else "cupons"
         responder_callback(callback_id)
+        solicitar_busca(chat_id, tipo_busca)
         return
 
     partes = data.split(":", 2)
@@ -515,22 +413,51 @@ def tratar_callback(callback_query):
     responder_callback(callback_id)
 
 
+def tratar_resposta_busca(msg, reply_to):
+    """Chamado quando o usuário responde (reply) ao prompt de ForceReply.
+    O message_id capturado em reply_to é o da própria mensagem de prompt,
+    que é editada in-place com o resultado da busca - dando a impressão de
+    que o "menu" apenas foi atualizado."""
+    chat_id = msg["chat"]["id"]
+    prompt_message_id = reply_to["message_id"]
+    tipo = tipo_do_prompt_busca(reply_to.get("text", ""))
+
+    texto_digitado = (msg.get("text") or "").strip()
+    filtro = texto_digitado[:TAMANHO_MAX_FILTRO] if texto_digitado else None
+
+    buscar = buscar_produtos if tipo == "produtos" else buscar_cupons
+    montar_texto = montar_texto_produtos if tipo == "produtos" else montar_texto_cupons
+
+    try:
+        itens, tem_proxima = buscar(0, nome=filtro)
+    except requests.RequestException:
+        logger.exception("Erro ao buscar (%s) via ForceReply, filtro=%r", tipo, filtro)
+        editar_mensagem(chat_id, prompt_message_id, MSG_ERRO_API, teclado_paginacao(tipo, 0, False, filtro))
+    else:
+        editar_mensagem(
+            chat_id,
+            prompt_message_id,
+            montar_texto(itens, filtro),
+            teclado_paginacao(tipo, 0, tem_proxima, filtro),
+        )
+
+    # Apaga a mensagem com o termo digitado, mantendo só o "menu" atualizado
+    # (funciona em chats privados; em grupos sem permissão de admin falha
+    # silenciosamente, o que é tratado dentro de tg_request).
+    tg_request("deleteMessage", {"chat_id": chat_id, "message_id": msg["message_id"]})
+
+
 def processar_update(update: dict):
     try:
         if "message" in update and "text" in update["message"]:
             msg = update["message"]
-
-            # Resposta ao ForceReply de busca.
-            if tratar_resposta_busca(msg):
-                return
-
-            if msg["text"].startswith("/"):
+            reply_to = msg.get("reply_to_message") or {}
+            if reply_to.get("from", {}).get("is_bot") and eh_prompt_busca(reply_to.get("text", "")):
+                tratar_resposta_busca(msg, reply_to)
+            elif msg["text"].startswith("/"):
                 tratar_comando(msg["chat"]["id"], msg["text"])
             else:
-                enviar_mensagem(
-                    msg["chat"]["id"],
-                    "Use o menu abaixo ou /ajuda para ver os comandos disponíveis.",
-                )
+                enviar_mensagem(msg["chat"]["id"], "Use /ajuda para ver os comandos disponíveis.")
         elif "callback_query" in update:
             tratar_callback(update["callback_query"])
     except Exception:
@@ -565,4 +492,3 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(arg0)
-        
