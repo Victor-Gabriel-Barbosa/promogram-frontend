@@ -12,7 +12,7 @@ Variáveis de ambiente esperadas (configure no painel da Vercel):
   TELEGRAM_WEBHOOK_SECRET -> (recomendado fortemente) segredo para validar
                              que a chamada realmente veio do Telegram
 
-Correções aplicadas nesta versão (ver resumo enviado ao usuário):
+Correções aplicadas em versão anterior:
   1. answerCallbackQuery só é chamado 1x por callback (evita erro silencioso
      e o toast "Não há mais ofertas/cupons" nunca aparecer).
   2. Falhas na API do backend são tratadas e avisadas ao usuário, em vez de
@@ -27,12 +27,18 @@ Correções aplicadas nesta versão (ver resumo enviado ao usuário):
      traceback em vez de print, checagem de "ok" nas respostas do Telegram,
      sessão HTTP reaproveitada, e o botão "Próximo" só aparece quando
      realmente existe mais uma página.
+  6. Busca por nome: "/produtos <termo>" e "/cupons <termo>" agora filtram
+     pelo nome do produto/cupom (repassado à API via ?nome=...). O filtro é
+     preservado ao navegar entre páginas (Anterior/Próximo), codificado no
+     callback_data dos botões.
 """
 import hmac
 import html
 import json
 import logging
 import os
+import re
+import urllib.parse
 from http.server import BaseHTTPRequestHandler
 
 import requests
@@ -49,6 +55,7 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 ITENS_POR_PAGINA = 5
 LOTE_BRUTO = max(ITENS_POR_PAGINA * 3, 15)
 MAX_TENTATIVAS_PAGINACAO = 10
+TAMANHO_MAX_FILTRO = 60
 
 MSG_ERRO_API = "⚠️ Não consegui buscar as informações agora. Tente novamente em instantes."
 
@@ -99,20 +106,21 @@ def responder_callback(callback_query_id, texto=None):
     return tg_request("answerCallbackQuery", payload)
 
 
-def _buscar_raw(endpoint, skip, limit):
-    r = sessao.get(
-        f"{API_BASE_URL}/{endpoint}", params={"skip": skip, "limit": limit}, timeout=10
-    )
+def _buscar_raw(endpoint, skip, limit, nome=None):
+    params = {"skip": skip, "limit": limit}
+    if nome:
+        params["nome"] = nome
+    r = sessao.get(f"{API_BASE_URL}/{endpoint}", params=params, timeout=10)
     r.raise_for_status()
     return r.json()
 
 
-def _buscar_publicados_paginado(endpoint, skip, limit):
+def _buscar_publicados_paginado(endpoint, skip, limit, nome=None):
     publicados = []
     raw_skip = 0
     necessario = skip + limit + 1
     for _ in range(MAX_TENTATIVAS_PAGINACAO):
-        lote = _buscar_raw(endpoint, raw_skip, LOTE_BRUTO)
+        lote = _buscar_raw(endpoint, raw_skip, LOTE_BRUTO, nome=nome)
         if not lote:
             break
         publicados.extend(item for item in lote if item.get("publicado", True))
@@ -124,12 +132,12 @@ def _buscar_publicados_paginado(endpoint, skip, limit):
     return pagina, tem_proxima
 
 
-def buscar_produtos(skip=0, limit=ITENS_POR_PAGINA):
-    return _buscar_publicados_paginado("produtos", skip, limit)
+def buscar_produtos(skip=0, limit=ITENS_POR_PAGINA, nome=None):
+    return _buscar_publicados_paginado("produtos", skip, limit, nome=nome)
 
 
-def buscar_cupons(skip=0, limit=ITENS_POR_PAGINA):
-    return _buscar_publicados_paginado("cupons", skip, limit)
+def buscar_cupons(skip=0, limit=ITENS_POR_PAGINA, nome=None):
+    return _buscar_publicados_paginado("cupons", skip, limit, nome=nome)
 
 
 def formatar_preco(valor):
@@ -153,10 +161,16 @@ def adicionar_produto_ao_texto(linhas, p):
     linhas.append("")
 
 
-def montar_texto_produtos(produtos):
+def montar_texto_produtos(produtos, filtro=None):
     if not produtos:
+        if filtro:
+            return f'Nenhuma oferta encontrada para "{html.escape(filtro)}". Tente outro termo! 🔎'
         return "Nenhuma oferta disponível no momento. Volte mais tarde! ⏳"
-    linhas = ["🛍️ <b>Ofertas em destaque</b>\n"]
+    if filtro:
+        titulo = f'🛍️ <b>Ofertas - resultados para "{html.escape(filtro)}"</b>'
+    else:
+        titulo = "🛍️ <b>Ofertas em destaque</b>"
+    linhas = [titulo + "\n"]
     for p in produtos:
         adicionar_produto_ao_texto(linhas, p)
     return "\n".join(linhas)
@@ -175,23 +189,48 @@ def adicionar_cupom_ao_texto(linhas, c):
     linhas.append("")
 
 
-def montar_texto_cupons(cupons):
+def montar_texto_cupons(cupons, filtro=None):
     if not cupons:
+        if filtro:
+            return f'Nenhum cupom encontrado para "{html.escape(filtro)}". Tente outro termo! 🔎'
         return "Nenhum cupom disponível no momento. Volte mais tarde! 🕐"
-    linhas = ["🎟️ <b>Cupons em destaque</b>\n"]
+    if filtro:
+        titulo = f'🎟️ <b>Cupons - resultados para "{html.escape(filtro)}"</b>'
+    else:
+        titulo = "🎟️ <b>Cupons em destaque</b>"
+    linhas = [titulo + "\n"]
     for c in cupons:
         adicionar_cupom_ao_texto(linhas, c)
     return "\n".join(linhas)
 
 
-def teclado_paginacao(tipo, skip, tem_proxima):
+def _codificar_callback(tipo, skip, filtro=None):
+    prefixo = f"{tipo}:{skip}"
+    if not filtro:
+        return prefixo
+    quoted = urllib.parse.quote(filtro, safe="")
+    espaco_disponivel = 64 - len(prefixo) - 1
+    quoted = quoted[:max(espaco_disponivel, 0)]
+    quoted = re.sub(r"%[0-9A-Fa-f]?$", "", quoted)
+    return f"{prefixo}:{quoted}" if quoted else prefixo
+
+
+def teclado_paginacao(tipo, skip, tem_proxima, filtro=None):
     nav = []
     if skip > 0:
         nav.append(
-            {"text": "❮ Anterior", "callback_data": f"{tipo}:{max(0, skip - ITENS_POR_PAGINA)}"}
+            {
+                "text": "❮ Anterior",
+                "callback_data": _codificar_callback(tipo, max(0, skip - ITENS_POR_PAGINA), filtro),
+            }
         )
     if tem_proxima:
-        nav.append({"text": "Próximo ❯", "callback_data": f"{tipo}:{skip + ITENS_POR_PAGINA}"})
+        nav.append(
+            {
+                "text": "Próximo ❯",
+                "callback_data": _codificar_callback(tipo, skip + ITENS_POR_PAGINA, filtro),
+            }
+        )
     linhas_botoes = [nav] if nav else []
     linhas_botoes.append([{"text": "◀️ Menu", "callback_data": "menu"}])
     return {"inline_keyboard": linhas_botoes}
@@ -211,8 +250,8 @@ def teclado_menu_principal():
 TEXTO_START = (
     "👋 Olá! Eu sou o bot de ofertas e cupons.\n\n"
     "Use o menu abaixo ou os comandos:\n"
-    "/produtos - Menu de ofertas de grupos do Telegram\n"
-    "/cupons - Menu de cupons de grupos do Telegram\n"
+    "/produtos [nome] - Ofertas de grupos do Telegram (filtra pelo nome, se informado)\n"
+    "/cupons [nome] - Cupons de grupos do Telegram (filtra pelo nome, se informado)\n"
     "/ajuda - Saiba como o bot funciona\n"
     "/contato - Entre em contato com o suporte"
 )
@@ -223,36 +262,46 @@ TEXTO_AJUDA = (
     "só lugar.\n\n"
     "• /produtos mostra as últimas ofertas cadastradas\n"
     "• /cupons mostra os cupons disponíveis\n"
+    "• Envie um termo junto do comando para buscar pelo nome, ex.: "
+    "<code>/produtos tênis</code> ou <code>/cupons frete grátis</code>\n"
     "• Toque em 'Ver oferta' ou 'Ver cupom' para ir direto ao link\n"
-    "• Use os botões Anterior/Próximo para navegar entre as páginas"
+    "• Use os botões Anterior/Próximo para navegar entre as páginas "
+    "(o filtro de busca é mantido)"
 )
 
 TEXTO_CONTATO = f"📞 Precisa de ajuda? Fale com o suporte: {CONTATO_SUPORTE}"
 
 
 def tratar_comando(chat_id, texto):
-    comando = texto.split()[0].split("@")[0].lower()
+    partes = texto.split(maxsplit=1)
+    comando = partes[0].split("@")[0].lower()
+    filtro = partes[1].strip()[:TAMANHO_MAX_FILTRO] if len(partes) > 1 and partes[1].strip() else None
+
     if comando == "/start":
         enviar_mensagem(chat_id, TEXTO_START, teclado_menu_principal())
     elif comando == "/produtos":
         try:
-            produtos, tem_proxima = buscar_produtos(0)
+            produtos, tem_proxima = buscar_produtos(0, nome=filtro)
         except requests.RequestException:
             logger.exception("Erro ao buscar produtos")
             enviar_mensagem(chat_id, MSG_ERRO_API)
             return
         enviar_mensagem(
-            chat_id, montar_texto_produtos(produtos), teclado_paginacao("produtos", 0, tem_proxima)
+            chat_id,
+            montar_texto_produtos(produtos, filtro),
+            teclado_paginacao("produtos", 0, tem_proxima, filtro),
         )
     elif comando == "/cupons":
         try:
-            cupons, tem_proxima = buscar_cupons(0)
+            cupons, tem_proxima = buscar_cupons(0, nome=filtro)
         except requests.RequestException:
             logger.exception("Erro ao buscar cupons")
             enviar_mensagem(chat_id, MSG_ERRO_API)
             return
         enviar_mensagem(
-            chat_id, montar_texto_cupons(cupons), teclado_paginacao("cupons", 0, tem_proxima)
+            chat_id,
+            montar_texto_cupons(cupons, filtro),
+            teclado_paginacao("cupons", 0, tem_proxima, filtro),
         )
     elif comando == "/ajuda":
         enviar_mensagem(chat_id, TEXTO_AJUDA)
@@ -292,8 +341,11 @@ def tratar_callback(callback_query):
         responder_callback(callback_id)
         return
 
-    tipo, _, skip_str = data.partition(":")
+    partes = data.split(":", 2)
+    tipo = partes[0]
+    skip_str = partes[1] if len(partes) > 1 else "0"
     skip = int(skip_str) if skip_str.isdigit() else 0
+    filtro = urllib.parse.unquote(partes[2]) if len(partes) > 2 and partes[2] else None
 
     if tipo not in ("produtos", "cupons"):
         responder_callback(callback_id)
@@ -303,9 +355,9 @@ def tratar_callback(callback_query):
     montar_texto = montar_texto_produtos if tipo == "produtos" else montar_texto_cupons
 
     try:
-        itens, tem_proxima = buscar(skip)
+        itens, tem_proxima = buscar(skip, nome=filtro)
     except requests.RequestException:
-        logger.exception("Erro ao paginar %s (skip=%s)", tipo, skip)
+        logger.exception("Erro ao paginar %s (skip=%s, filtro=%r)", tipo, skip, filtro)
         responder_callback(callback_id, "Erro ao buscar dados, tente novamente.")
         return
 
@@ -314,7 +366,10 @@ def tratar_callback(callback_query):
         return
 
     editar_mensagem(
-        chat_id, message_id, montar_texto(itens), teclado_paginacao(tipo, skip, tem_proxima)
+        chat_id,
+        message_id,
+        montar_texto(itens, filtro),
+        teclado_paginacao(tipo, skip, tem_proxima, filtro),
     )
     responder_callback(callback_id)
 
@@ -361,3 +416,4 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(arg0)
+        
