@@ -148,7 +148,7 @@ def montar_texto_produtos(produtos, filtro=None):
         return "Nenhuma oferta disponível no momento. Volte mais tarde! ⏳"
     
     if filtro:
-        titulo = f'🛍️ <b>Ofertas - resultados para "{html.escape(filtro)}"</b>'
+        titulo = f'🛍️ <b>Ofertas - ({len(produtos)}) resultados para "{html.escape(filtro)}"</b>'
     else:
         titulo = "🛍️ <b>Ofertas em destaque</b>"
         
@@ -181,7 +181,7 @@ def montar_texto_cupons(cupons, filtro=None):
         return "Nenhum cupom disponível no momento. Volte mais tarde! 🕐"
         
     if filtro:
-        titulo = f'🎟️ <b>Cupons - resultados para "{html.escape(filtro)}"</b>'
+        titulo = f'🎟️ <b>Cupons - ({len(cupons)}) resultados para "{html.escape(filtro)}"</b>'
     else:
         titulo = "🎟️ <b>Cupons em destaque</b>"
         
