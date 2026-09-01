@@ -27,10 +27,6 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 ITENS_POR_PAGINA = 5
 
 
-# ---------------------------------------------------------------------------
-# Helpers de comunicação com o Telegram
-# ---------------------------------------------------------------------------
-
 def tg_request(method: str, payload: dict) -> dict:
     resp = requests.post(f"{TELEGRAM_API}/{method}", json=payload, timeout=10)
     return resp.json()
@@ -68,10 +64,6 @@ def responder_callback(callback_query_id, texto=None):
     return tg_request("answerCallbackQuery", payload)
 
 
-# ---------------------------------------------------------------------------
-# Helpers de comunicação com a API (main.py / models.py)
-# ---------------------------------------------------------------------------
-
 def buscar_produtos(skip=0, limit=ITENS_POR_PAGINA):
     r = requests.get(
         f"{API_BASE_URL}/produtos", params={"skip": skip, "limit": limit}, timeout=10
@@ -88,10 +80,6 @@ def buscar_cupons(skip=0, limit=ITENS_POR_PAGINA):
     return [c for c in r.json() if c.get("publicado", True)]
 
 
-# ---------------------------------------------------------------------------
-# Formatação de mensagens
-# ---------------------------------------------------------------------------
-
 def formatar_preco(valor):
     if valor is None:
         return "Consulte o valor"
@@ -101,9 +89,9 @@ def formatar_preco(valor):
 def montar_texto_produtos(produtos):
     if not produtos:
         return "Nenhuma oferta disponível no momento. Volte mais tarde! ⏳"
-    linhas = ["🛒 <b>Ofertas em destaque</b>\n"]
+    linhas = ["🛍️ <b>Ofertas em destaque</b>\n"]
     for p in produtos:
-        linhas.append(f"🔹 <b>{p.get('nome') or 'Produto'}</b>")
+        linhas.append(f"💠 <b>{p.get('nome') or 'Produto'}</b>")
         preco_txt = formatar_preco(p.get("preco"))
         if p.get("preco_parcelado"):
             preco_txt += f" (ou parcelado {formatar_preco(p['preco_parcelado'])})"
@@ -121,17 +109,21 @@ def montar_texto_cupons(cupons):
         return "Nenhum cupom disponível no momento. Volte mais tarde! 🕐"
     linhas = ["🎟️ <b>Cupons em destaque</b>\n"]
     for c in cupons:
-        linhas.append(f"🔹 <b>{c.get('nome') or 'Cupom'}</b>")
-        if c.get("codigo"):
-            linhas.append(f"Código: <code>{c['codigo']}</code>")
-        if c.get("desconto"):
-            linhas.append(f"Desconto: {c['desconto']}")
-        if c.get("limite_minimo"):
-            linhas.append(f"Pedido mínimo: {formatar_preco(c['limite_minimo'])}")
-        if c.get("link"):
-            linhas.append(f"🔗 <a href=\"{c['link']}\">Ver cupom</a>")
-        linhas.append("")
+        adicionar_cupom_ao_texto(linhas, c)
     return "\n".join(linhas)
+
+
+def adicionar_cupom_ao_texto(linhas, c):
+    linhas.append(f"💠 <b>{c.get('nome') or 'Cupom'}</b>")
+    if c.get("codigo"):
+        linhas.append(f"Código: <code>{c['codigo']}</code>")
+    if c.get("desconto"):
+        linhas.append(f"Desconto: {c['desconto']}")
+    if c.get("limite_minimo"):
+        linhas.append(f"Pedido mínimo: {formatar_preco(c['limite_minimo'])}")
+    if c.get("link"):
+        linhas.append(f"🔗 <a href=\"{c['link']}\">Ver cupom</a>")
+    linhas.append("")
 
 
 def teclado_paginacao(tipo, skip):
@@ -147,17 +139,13 @@ def teclado_paginacao(tipo, skip):
 def teclado_menu_principal():
     return {
         "inline_keyboard": [
-            [{"text": "🛒 Produtos", "callback_data": "produtos:0"}],
+            [{"text": "🛍️ Produtos", "callback_data": "produtos:0"}],
             [{"text": "🎟️ Cupons", "callback_data": "cupons:0"}],
-            [{"text": "❓ Ajuda", "callback_data": "ajuda"}],
+            [{"text": "ℹ️ Ajuda", "callback_data": "ajuda"}],
             [{"text": "📞 Contato", "callback_data": "contato"}],
         ]
     }
-
-
-# ---------------------------------------------------------------------------
-# Textos fixos
-# ---------------------------------------------------------------------------
+    
 
 TEXTO_START = (
     "👋 Olá! Eu sou o bot de ofertas e cupons.\n\n"
@@ -180,10 +168,6 @@ TEXTO_AJUDA = (
 
 TEXTO_CONTATO = f"📞 Precisa de ajuda? Fale com o suporte: {CONTATO_SUPORTE}"
 
-
-# ---------------------------------------------------------------------------
-# Lógica dos comandos
-# ---------------------------------------------------------------------------
 
 def tratar_comando(chat_id, texto):
     comando = texto.split()[0].split("@")[0].lower()
@@ -247,18 +231,11 @@ def processar_update(update: dict):
         elif "callback_query" in update:
             tratar_callback(update["callback_query"])
     except Exception as e:
-        # Nunca deixa a exceção derrubar a function - só loga.
         print(f"[bot] erro ao processar update: {e}")
 
 
-# ---------------------------------------------------------------------------
-# Entrypoint da Vercel (Python runtime nativo, sem framework)
-# ---------------------------------------------------------------------------
-
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
-        # Valida o segredo do webhook, se configurado, para garantir que a
-        # chamada veio mesmo do Telegram (ver TELEGRAM_WEBHOOK_SECRET no README).
         if WEBHOOK_SECRET:
             recebido = self.headers.get("X-Telegram-Bot-Api-Secret-Token")
             if recebido != WEBHOOK_SECRET:
@@ -275,13 +252,13 @@ class handler(BaseHTTPRequestHandler):
 
         processar_update(update)
 
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(b'{"ok": true}')
+        self.enviar_resposta_json(b'{"ok": true}')
 
     def do_GET(self):
+        self.enviar_resposta_json(b'{"status": "bot ativo"}')
+
+    def enviar_resposta_json(self, arg0):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(b'{"status": "bot ativo"}')
+        self.wfile.write(arg0)
