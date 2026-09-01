@@ -144,15 +144,21 @@ def adicionar_produto_ao_texto(linhas, p):
 def montar_texto_produtos(produtos, filtro=None):
     if not produtos:
         if filtro:
-            return f'Nenhuma oferta encontrada para "{html.escape(filtro)}". Tente outro termo! 🔎'
+            return f'Nenhuma oferta encontrada para "{html.escape(filtro)}". Tente outro termo! 🔎\n\n💡 <i>Dica: Responda esta mensagem para buscar novamente.</i>'
         return "Nenhuma oferta disponível no momento. Volte mais tarde! ⏳"
+    
     if filtro:
         titulo = f'🛍️ <b>Ofertas - resultados para "{html.escape(filtro)}"</b>'
     else:
         titulo = "🛍️ <b>Ofertas em destaque</b>"
+        
     linhas = [titulo + "\n"]
     for p in produtos:
         adicionar_produto_ao_texto(linhas, p)
+        
+    if not filtro:
+        linhas.append("💡 <i>Dica: Responda esta mensagem com o nome do produto para buscar!</i>")
+    
     return "\n".join(linhas)
 
 
@@ -172,15 +178,21 @@ def adicionar_cupom_ao_texto(linhas, c):
 def montar_texto_cupons(cupons, filtro=None):
     if not cupons:
         if filtro:
-            return f'Nenhum cupom encontrado para "{html.escape(filtro)}". Tente outro termo! 🔎'
+            return f'Nenhum cupom encontrado para "{html.escape(filtro)}". Tente outro termo! 🔎\n\n💡 <i>Dica: Responda esta mensagem para buscar novamente.</i>'
         return "Nenhum cupom disponível no momento. Volte mais tarde! 🕐"
+        
     if filtro:
         titulo = f'🎟️ <b>Cupons - resultados para "{html.escape(filtro)}"</b>'
     else:
         titulo = "🎟️ <b>Cupons em destaque</b>"
+        
     linhas = [titulo + "\n"]
     for c in cupons:
         adicionar_cupom_ao_texto(linhas, c)
+        
+    if not filtro:
+        linhas.append("💡 <i>Dica: Responda esta mensagem com o nome da loja/cupom para buscar!</i>")
+    
     return "\n".join(linhas)
 
 
