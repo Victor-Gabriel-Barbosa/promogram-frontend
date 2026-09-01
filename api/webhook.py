@@ -9,14 +9,36 @@ Variáveis de ambiente esperadas (configure no painel da Vercel):
   TELEGRAM_BOT_TOKEN      -> token dado pelo @BotFather
   API_BASE_URL            -> URL pública da API FastAPI (main.py/models.py)
   SUPORTE_CONTATO         -> texto/usuário exibido no comando /contato
-  TELEGRAM_WEBHOOK_SECRET -> (opcional, recomendado) segredo para validar
+  TELEGRAM_WEBHOOK_SECRET -> (recomendado fortemente) segredo para validar
                              que a chamada realmente veio do Telegram
+
+Correções aplicadas nesta versão (ver resumo enviado ao usuário):
+  1. answerCallbackQuery só é chamado 1x por callback (evita erro silencioso
+     e o toast "Não há mais ofertas/cupons" nunca aparecer).
+  2. Falhas na API do backend são tratadas e avisadas ao usuário, em vez de
+     deixar a mensagem sem resposta.
+  3. Paginação agora é feita sobre os itens já filtrados por "publicado",
+     buscando lotes brutos extras quando necessário - antes, uma página
+     podia ficar vazia mesmo havendo mais itens publicados adiante.
+  4. Campos vindos da API (nome, código, desconto etc.) são escapados com
+     html.escape antes de entrar na mensagem HTML, evitando que um "<" ou
+     "&" no texto quebre o envio (Telegram rejeita HTML inválido).
+  5. Extras: comparação do secret com hmac.compare_digest, logging com
+     traceback em vez de print, checagem de "ok" nas respostas do Telegram,
+     sessão HTTP reaproveitada, e o botão "Próximo" só aparece quando
+     realmente existe mais uma página.
 """
+import hmac
+import html
 import json
+import logging
 import os
 from http.server import BaseHTTPRequestHandler
 
 import requests
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("bot_telegram")
 
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000").rstrip("/")
@@ -25,11 +47,24 @@ WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET")
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 ITENS_POR_PAGINA = 5
+LOTE_BRUTO = max(ITENS_POR_PAGINA * 3, 15)  # buffer p/ compensar itens não publicados
+MAX_TENTATIVAS_PAGINACAO = 10
+
+MSG_ERRO_API = "⚠️ Não consegui buscar as informações agora. Tente novamente em instantes."
+
+sessao = requests.Session()
 
 
 def tg_request(method: str, payload: dict) -> dict:
-    resp = requests.post(f"{TELEGRAM_API}/{method}", json=payload, timeout=10)
-    return resp.json()
+    try:
+        resp = sessao.post(f"{TELEGRAM_API}/{method}", json=payload, timeout=10)
+        dados = resp.json()
+    except (requests.RequestException, ValueError) as e:
+        logger.error("Falha ao chamar %s: %s", method, e)
+        return {"ok": False, "error": str(e)}
+    if not dados.get("ok"):
+        logger.warning("Telegram retornou erro em %s: %s", method, dados)
+    return dados
 
 
 def enviar_mensagem(chat_id, texto, teclado=None, parse_mode="HTML"):
@@ -64,26 +99,69 @@ def responder_callback(callback_query_id, texto=None):
     return tg_request("answerCallbackQuery", payload)
 
 
-def buscar_produtos(skip=0, limit=ITENS_POR_PAGINA):
-    r = requests.get(
-        f"{API_BASE_URL}/produtos", params={"skip": skip, "limit": limit}, timeout=10
+def _buscar_raw(endpoint, skip, limit):
+    r = sessao.get(
+        f"{API_BASE_URL}/{endpoint}", params={"skip": skip, "limit": limit}, timeout=10
     )
     r.raise_for_status()
-    return [p for p in r.json() if p.get("publicado", True)]
+    return r.json()
+
+
+def _buscar_publicados_paginado(endpoint, skip, limit):
+    """
+    A API mistura itens publicados e não publicados na mesma página, então
+    filtrar depois de aplicar skip/limit dela pode esvaziar uma página sem
+    que os itens tenham realmente acabado. Aqui buscamos lotes brutos
+    (maiores) até juntar itens publicados suficientes para montar a página
+    pedida e para saber se existe pelo menos mais 1 item além dela (o que
+    decide se mostramos o botão "Próximo").
+
+    Retorna (itens_da_pagina, tem_proxima_pagina).
+    """
+    publicados = []
+    raw_skip = 0
+    necessario = skip + limit + 1
+    for _ in range(MAX_TENTATIVAS_PAGINACAO):
+        lote = _buscar_raw(endpoint, raw_skip, LOTE_BRUTO)
+        if not lote:
+            break
+        publicados.extend(item for item in lote if item.get("publicado", True))
+        raw_skip += LOTE_BRUTO
+        if len(lote) < LOTE_BRUTO or len(publicados) >= necessario:
+            break
+    pagina = publicados[skip:skip + limit]
+    tem_proxima = len(publicados) > skip + limit
+    return pagina, tem_proxima
+
+
+def buscar_produtos(skip=0, limit=ITENS_POR_PAGINA):
+    return _buscar_publicados_paginado("produtos", skip, limit)
 
 
 def buscar_cupons(skip=0, limit=ITENS_POR_PAGINA):
-    r = requests.get(
-        f"{API_BASE_URL}/cupons", params={"skip": skip, "limit": limit}, timeout=10
-    )
-    r.raise_for_status()
-    return [c for c in r.json() if c.get("publicado", True)]
+    return _buscar_publicados_paginado("cupons", skip, limit)
 
 
 def formatar_preco(valor):
     if valor is None:
         return "Consulte o valor"
-    return f"R$ {float(valor):.2f}".replace(".", ",")
+    # ex.: 1234.5 -> "R$ 1.234,50" (separador de milhar + vírgula decimal)
+    texto = f"{float(valor):,.2f}"
+    texto = texto.replace(",", "_").replace(".", ",").replace("_", ".")
+    return f"R$ {texto}"
+
+
+def adicionar_produto_ao_texto(linhas, p):
+    linhas.append(f"🔹 <b>{html.escape(p.get('nome') or 'Produto')}</b>")
+    preco_txt = formatar_preco(p.get("preco"))
+    if p.get("preco_parcelado"):
+        preco_txt += f" (ou parcelado {formatar_preco(p['preco_parcelado'])})"
+    linhas.append(f"💵 {preco_txt}")
+    if p.get("cupom"):
+        linhas.append(f"🎟️ Cupom: <code>{html.escape(str(p['cupom']))}</code>")
+    if p.get("link"):
+        linhas.append(f"🔗 <a href=\"{html.escape(p['link'])}\">Ver oferta</a>")
+    linhas.append("")
 
 
 def montar_texto_produtos(produtos):
@@ -91,17 +169,21 @@ def montar_texto_produtos(produtos):
         return "Nenhuma oferta disponível no momento. Volte mais tarde! ⏳"
     linhas = ["🛍️ <b>Ofertas em destaque</b>\n"]
     for p in produtos:
-        linhas.append(f"🔹 <b>{p.get('nome') or 'Produto'}</b>")
-        preco_txt = formatar_preco(p.get("preco"))
-        if p.get("preco_parcelado"):
-            preco_txt += f" (ou parcelado {formatar_preco(p['preco_parcelado'])})"
-        linhas.append(f"💵 {preco_txt}")
-        if p.get("cupom"):
-            linhas.append(f"🎟️ Cupom: <code>{p['cupom']}</code>")
-        if p.get("link"):
-            linhas.append(f"🔗 <a href=\"{p['link']}\">Ver oferta</a>")
-        linhas.append("")
+        adicionar_produto_ao_texto(linhas, p)
     return "\n".join(linhas)
+
+
+def adicionar_cupom_ao_texto(linhas, c):
+    linhas.append(f"🔹 <b>{html.escape(c.get('nome') or 'Cupom')}</b>")
+    if c.get("codigo"):
+        linhas.append(f"Código: <code>{html.escape(str(c['codigo']))}</code>")
+    if c.get("desconto"):
+        linhas.append(f"Desconto: {html.escape(str(c['desconto']))}")
+    if c.get("limite_minimo"):
+        linhas.append(f"Pedido mínimo: {formatar_preco(c['limite_minimo'])}")
+    if c.get("link"):
+        linhas.append(f"🔗 <a href=\"{html.escape(c['link'])}\">Ver cupom</a>")
+    linhas.append("")
 
 
 def montar_texto_cupons(cupons):
@@ -113,27 +195,17 @@ def montar_texto_cupons(cupons):
     return "\n".join(linhas)
 
 
-def adicionar_cupom_ao_texto(linhas, c):
-    linhas.append(f"🔹 <b>{c.get('nome') or 'Cupom'}</b>")
-    if c.get("codigo"):
-        linhas.append(f"Código: <code>{c['codigo']}</code>")
-    if c.get("desconto"):
-        linhas.append(f"Desconto: {c['desconto']}")
-    if c.get("limite_minimo"):
-        linhas.append(f"Pedido mínimo: {formatar_preco(c['limite_minimo'])}")
-    if c.get("link"):
-        linhas.append(f"🔗 <a href=\"{c['link']}\">Ver cupom</a>")
-    linhas.append("")
-
-
-def teclado_paginacao(tipo, skip):
+def teclado_paginacao(tipo, skip, tem_proxima):
     nav = []
     if skip > 0:
         nav.append(
             {"text": "❮ Anterior", "callback_data": f"{tipo}:{max(0, skip - ITENS_POR_PAGINA)}"}
         )
-    nav.append({"text": "Próximo ❯", "callback_data": f"{tipo}:{skip + ITENS_POR_PAGINA}"})
-    return {"inline_keyboard": [nav, [{"text": "◀️ Menu", "callback_data": "menu"}]]}
+    if tem_proxima:
+        nav.append({"text": "Próximo ❯", "callback_data": f"{tipo}:{skip + ITENS_POR_PAGINA}"})
+    linhas_botoes = [nav] if nav else []
+    linhas_botoes.append([{"text": "◀️ Menu", "callback_data": "menu"}])
+    return {"inline_keyboard": linhas_botoes}
 
 
 def teclado_menu_principal():
@@ -145,7 +217,7 @@ def teclado_menu_principal():
             [{"text": "📞 Contato", "callback_data": "contato"}],
         ]
     }
-    
+
 
 TEXTO_START = (
     "👋 Olá! Eu sou o bot de ofertas e cupons.\n\n"
@@ -174,11 +246,25 @@ def tratar_comando(chat_id, texto):
     if comando == "/start":
         enviar_mensagem(chat_id, TEXTO_START, teclado_menu_principal())
     elif comando == "/produtos":
-        produtos = buscar_produtos(0)
-        enviar_mensagem(chat_id, montar_texto_produtos(produtos), teclado_paginacao("produtos", 0))
+        try:
+            produtos, tem_proxima = buscar_produtos(0)
+        except requests.RequestException:
+            logger.exception("Erro ao buscar produtos")
+            enviar_mensagem(chat_id, MSG_ERRO_API)
+            return
+        enviar_mensagem(
+            chat_id, montar_texto_produtos(produtos), teclado_paginacao("produtos", 0, tem_proxima)
+        )
     elif comando == "/cupons":
-        cupons = buscar_cupons(0)
-        enviar_mensagem(chat_id, montar_texto_cupons(cupons), teclado_paginacao("cupons", 0))
+        try:
+            cupons, tem_proxima = buscar_cupons(0)
+        except requests.RequestException:
+            logger.exception("Erro ao buscar cupons")
+            enviar_mensagem(chat_id, MSG_ERRO_API)
+            return
+        enviar_mensagem(
+            chat_id, montar_texto_cupons(cupons), teclado_paginacao("cupons", 0, tem_proxima)
+        )
     elif comando == "/ajuda":
         enviar_mensagem(chat_id, TEXTO_AJUDA)
     elif comando == "/contato":
@@ -188,36 +274,63 @@ def tratar_comando(chat_id, texto):
 
 
 def tratar_callback(callback_query):
-    chat_id = callback_query["message"]["chat"]["id"]
-    message_id = callback_query["message"]["message_id"]
-    data = callback_query["data"]
-    responder_callback(callback_query["id"])
+    mensagem = callback_query.get("message")
+    if not mensagem:
+        # mensagem original pode ter sido apagada; só confirma o callback
+        responder_callback(callback_query["id"])
+        return
+
+    chat_id = mensagem["chat"]["id"]
+    message_id = mensagem["message_id"]
+    data = callback_query.get("data", "")
+    callback_id = callback_query["id"]
 
     if data == "menu":
         editar_mensagem(chat_id, message_id, TEXTO_START, teclado_menu_principal())
+        responder_callback(callback_id)
         return
     if data == "ajuda":
-        editar_mensagem(chat_id, message_id, TEXTO_AJUDA, {"inline_keyboard": [[{"text": "◀️ Menu", "callback_data": "menu"}]]})
+        editar_mensagem(
+            chat_id, message_id, TEXTO_AJUDA,
+            {"inline_keyboard": [[{"text": "◀️ Menu", "callback_data": "menu"}]]},
+        )
+        responder_callback(callback_id)
         return
     if data == "contato":
-        editar_mensagem(chat_id, message_id, TEXTO_CONTATO, {"inline_keyboard": [[{"text": "◀️ Menu", "callback_data": "menu"}]]})
+        editar_mensagem(
+            chat_id, message_id, TEXTO_CONTATO,
+            {"inline_keyboard": [[{"text": "◀️ Menu", "callback_data": "menu"}]]},
+        )
+        responder_callback(callback_id)
         return
 
     tipo, _, skip_str = data.partition(":")
     skip = int(skip_str) if skip_str.isdigit() else 0
 
-    if tipo == "produtos":
-        produtos = buscar_produtos(skip)
-        if not produtos and skip > 0:
-            responder_callback(callback_query["id"], "Não há mais ofertas.")
-            return
-        editar_mensagem(chat_id, message_id, montar_texto_produtos(produtos), teclado_paginacao("produtos", skip))
-    elif tipo == "cupons":
-        cupons = buscar_cupons(skip)
-        if not cupons and skip > 0:
-            responder_callback(callback_query["id"], "Não há mais cupons.")
-            return
-        editar_mensagem(chat_id, message_id, montar_texto_cupons(cupons), teclado_paginacao("cupons", skip))
+    if tipo not in ("produtos", "cupons"):
+        responder_callback(callback_id)
+        return
+
+    buscar = buscar_produtos if tipo == "produtos" else buscar_cupons
+    montar_texto = montar_texto_produtos if tipo == "produtos" else montar_texto_cupons
+
+    try:
+        itens, tem_proxima = buscar(skip)
+    except requests.RequestException:
+        logger.exception("Erro ao paginar %s (skip=%s)", tipo, skip)
+        responder_callback(callback_id, "Erro ao buscar dados, tente novamente.")
+        return
+
+    if not itens and skip > 0:
+        # já respondemos a callback aqui com o aviso e paramos - antes disso
+        # havia uma 2ª tentativa de resposta que o Telegram rejeitava
+        responder_callback(callback_id, "Não há mais itens para mostrar.")
+        return
+
+    editar_mensagem(
+        chat_id, message_id, montar_texto(itens), teclado_paginacao(tipo, skip, tem_proxima)
+    )
+    responder_callback(callback_id)
 
 
 def processar_update(update: dict):
@@ -230,15 +343,15 @@ def processar_update(update: dict):
                 enviar_mensagem(msg["chat"]["id"], "Use /ajuda para ver os comandos disponíveis.")
         elif "callback_query" in update:
             tratar_callback(update["callback_query"])
-    except Exception as e:
-        print(f"[bot] erro ao processar update: {e}")
+    except Exception:
+        logger.exception("Erro ao processar update: %s", update)
 
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if WEBHOOK_SECRET:
-            recebido = self.headers.get("X-Telegram-Bot-Api-Secret-Token")
-            if recebido != WEBHOOK_SECRET:
+            recebido = self.headers.get("X-Telegram-Bot-Api-Secret-Token") or ""
+            if not hmac.compare_digest(recebido, WEBHOOK_SECRET):
                 self.send_response(401)
                 self.end_headers()
                 return
