@@ -156,8 +156,7 @@ def montar_texto_produtos(produtos, filtro=None):
     for p in produtos:
         adicionar_produto_ao_texto(linhas, p)
         
-    if not filtro:
-        linhas.append("💡 <i>Dica: Responda esta mensagem com o nome do produto para buscar!</i>")
+    linhas.append("💡 <i>Dica: Responda esta mensagem com o nome do produto para buscar!</i>")
     
     return "\n".join(linhas)
 
@@ -190,8 +189,7 @@ def montar_texto_cupons(cupons, filtro=None):
     for c in cupons:
         adicionar_cupom_ao_texto(linhas, c)
         
-    if not filtro:
-        linhas.append("💡 <i>Dica: Responda esta mensagem com o nome da loja/cupom para buscar!</i>")
+    linhas.append("💡 <i>Dica: Responda esta mensagem com o nome da loja/cupom para buscar!</i>")
     
     return "\n".join(linhas)
 
