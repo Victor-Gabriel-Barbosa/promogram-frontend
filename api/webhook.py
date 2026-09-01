@@ -47,7 +47,7 @@ WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET")
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 ITENS_POR_PAGINA = 5
-LOTE_BRUTO = max(ITENS_POR_PAGINA * 3, 15)  # buffer p/ compensar itens não publicados
+LOTE_BRUTO = max(ITENS_POR_PAGINA * 3, 15)
 MAX_TENTATIVAS_PAGINACAO = 10
 
 MSG_ERRO_API = "⚠️ Não consegui buscar as informações agora. Tente novamente em instantes."
@@ -108,16 +108,6 @@ def _buscar_raw(endpoint, skip, limit):
 
 
 def _buscar_publicados_paginado(endpoint, skip, limit):
-    """
-    A API mistura itens publicados e não publicados na mesma página, então
-    filtrar depois de aplicar skip/limit dela pode esvaziar uma página sem
-    que os itens tenham realmente acabado. Aqui buscamos lotes brutos
-    (maiores) até juntar itens publicados suficientes para montar a página
-    pedida e para saber se existe pelo menos mais 1 item além dela (o que
-    decide se mostramos o botão "Próximo").
-
-    Retorna (itens_da_pagina, tem_proxima_pagina).
-    """
     publicados = []
     raw_skip = 0
     necessario = skip + limit + 1
@@ -145,7 +135,6 @@ def buscar_cupons(skip=0, limit=ITENS_POR_PAGINA):
 def formatar_preco(valor):
     if valor is None:
         return "Consulte o valor"
-    # ex.: 1234.5 -> "R$ 1.234,50" (separador de milhar + vírgula decimal)
     texto = f"{float(valor):,.2f}"
     texto = texto.replace(",", "_").replace(".", ",").replace("_", ".")
     return f"R$ {texto}"
@@ -276,7 +265,6 @@ def tratar_comando(chat_id, texto):
 def tratar_callback(callback_query):
     mensagem = callback_query.get("message")
     if not mensagem:
-        # mensagem original pode ter sido apagada; só confirma o callback
         responder_callback(callback_query["id"])
         return
 
@@ -322,8 +310,6 @@ def tratar_callback(callback_query):
         return
 
     if not itens and skip > 0:
-        # já respondemos a callback aqui com o aviso e paramos - antes disso
-        # havia uma 2ª tentativa de resposta que o Telegram rejeitava
         responder_callback(callback_id, "Não há mais itens para mostrar.")
         return
 
