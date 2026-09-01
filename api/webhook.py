@@ -59,6 +59,12 @@ TAMANHO_MAX_FILTRO = 60
 
 MSG_ERRO_API = "⚠️ Não consegui buscar as informações agora. Tente novamente em instantes."
 
+MSG_BUSCA_PRODUTOS = "🔎 <b>Buscar produtos</b>\n\nDigite o nome do produto que deseja encontrar:"
+MSG_BUSCA_CUPONS = "🔎 <b>Buscar cupons</b>\n\nDigite o nome do cupom que deseja encontrar:"
+
+PLACEHOLDER_BUSCA_PRODUTOS = "Ex.: notebook, tênis, celular..."
+PLACEHOLDER_BUSCA_CUPONS = "Ex.: frete grátis, amazon, desconto..."
+
 sessao = requests.Session()
 
 
@@ -231,8 +237,19 @@ def teclado_paginacao(tipo, skip, tem_proxima, filtro=None):
                 "callback_data": _codificar_callback(tipo, skip + ITENS_POR_PAGINA, filtro),
             }
         )
+
     linhas_botoes = [nav] if nav else []
-    linhas_botoes.append([{"text": "◀️ Menu", "callback_data": "menu"}])
+    linhas_botoes.extend(
+        (
+            [
+                {
+                    "text": "🔎 Pesquisar",
+                    "callback_data": f"buscar:{tipo}",
+                }
+            ],
+            [{"text": "◀️ Menu", "callback_data": "menu"}],
+        )
+    )
     return {"inline_keyboard": linhas_botoes}
 
 
@@ -262,7 +279,8 @@ TEXTO_AJUDA = (
     "só lugar.\n\n"
     "• /produtos mostra as últimas ofertas cadastradas\n"
     "• /cupons mostra os cupons disponíveis\n"
-    "• Envie um termo junto do comando para buscar pelo nome, ex.: "
+    "• Toque em '🔎 Pesquisar' para buscar produtos ou cupons pelo nome\n"
+    "• Também é possível usar os comandos com um termo, ex.: "
     "<code>/produtos tênis</code> ou <code>/cupons frete grátis</code>\n"
     "• Toque em 'Ver oferta' ou 'Ver cupom' para ir direto ao link\n"
     "• Use os botões Anterior/Próximo para navegar entre as páginas "
@@ -270,6 +288,58 @@ TEXTO_AJUDA = (
 )
 
 TEXTO_CONTATO = f"📞 Precisa de ajuda? Fale com o suporte: {CONTATO_SUPORTE}"
+
+
+def solicitar_busca(chat_id, tipo):
+    if tipo == "produtos":
+        texto = MSG_BUSCA_PRODUTOS
+        placeholder = PLACEHOLDER_BUSCA_PRODUTOS
+    else:
+        texto = MSG_BUSCA_CUPONS
+        placeholder = PLACEHOLDER_BUSCA_CUPONS
+
+    teclado = {
+        "force_reply": True,
+        "input_field_placeholder": placeholder,
+        "selective": True,
+    }
+    return enviar_mensagem(chat_id, texto, teclado)
+
+
+def tratar_busca_por_resposta(chat_id, msg):
+    texto = msg.get("text", "").strip()
+    resposta = msg.get("reply_to_message") or {}
+    prompt = resposta.get("text", "")
+
+    if prompt.startswith("🔎 <b>Buscar produtos</b>"):
+        tipo = "produtos"
+    elif prompt.startswith("🔎 <b>Buscar cupons</b>"):
+        tipo = "cupons"
+    else:
+        return False
+
+    filtro = texto[:TAMANHO_MAX_FILTRO] if texto else None
+    if not filtro:
+        enviar_mensagem(chat_id, "⚠️ Digite algum termo para realizar a busca.")
+        solicitar_busca(chat_id, tipo)
+        return True
+
+    buscar = buscar_produtos if tipo == "produtos" else buscar_cupons
+    montar_texto = montar_texto_produtos if tipo == "produtos" else montar_texto_cupons
+
+    try:
+        itens, tem_proxima = buscar(0, nome=filtro)
+    except requests.RequestException:
+        logger.exception("Erro ao buscar %s por texto", tipo)
+        enviar_mensagem(chat_id, MSG_ERRO_API)
+        return True
+
+    enviar_mensagem(
+        chat_id,
+        montar_texto(itens, filtro),
+        teclado_paginacao(tipo, 0, tem_proxima, filtro),
+    )
+    return True
 
 
 def tratar_comando(chat_id, texto):
@@ -341,6 +411,12 @@ def tratar_callback(callback_query):
         responder_callback(callback_id)
         return
 
+    if data in ("buscar:produtos", "buscar:cupons"):
+        tipo_busca = data.split(":", 1)[1]
+        solicitar_busca(chat_id, tipo_busca)
+        responder_callback(callback_id)
+        return
+
     partes = data.split(":", 2)
     tipo = partes[0]
     skip_str = partes[1] if len(partes) > 1 else "0"
@@ -380,7 +456,7 @@ def processar_update(update: dict):
             msg = update["message"]
             if msg["text"].startswith("/"):
                 tratar_comando(msg["chat"]["id"], msg["text"])
-            else:
+            elif not tratar_busca_por_resposta(msg["chat"]["id"], msg):
                 enviar_mensagem(msg["chat"]["id"], "Use /ajuda para ver os comandos disponíveis.")
         elif "callback_query" in update:
             tratar_callback(update["callback_query"])
