@@ -228,25 +228,36 @@ def teclado_menu_principal():
 
 
 TEXTO_START = (
-    "👋 Olá! Eu sou o bot de ofertas e cupons.\n\n"
-    "Use o menu abaixo ou os comandos:\n"
-    "/produtos [nome] - Ofertas de grupos do Telegram (filtra pelo nome)\n"
-    "/cupons [nome] - Cupons de grupos do Telegram (filtra pelo nome)\n"
-    "/ajuda - Saiba como o bot funciona\n"
-    "/contato - Entre em contato com o suporte"
+    "👋 <b>Olá! Seja bem-vindo ao Promogram!</b>\n\n"
+    "🛍️ Encontre ofertas e cupons em poucos cliques.\n\n"
+    "👇 O que você está procurando?"
 )
 
 TEXTO_AJUDA = (
     "ℹ️ <b>Como funciona</b>\n\n"
     "Eu reúno as melhores ofertas e cupons de grupos do Telegram em um "
     "só lugar.\n\n"
+    
+    "🛍️ <b>Produtos</b>\n"
     "• /produtos mostra as últimas ofertas cadastradas\n"
+    "• Você pode buscar pelo nome usando, por exemplo, "
+    "<code>/produtos tênis</code>\n\n"
+    
+    "🎟️ <b>Cupons</b>\n"
     "• /cupons mostra os cupons disponíveis\n"
-    "• Envie um termo junto do comando para buscar pelo nome, ex.: "
-    "<code>/produtos tênis</code> ou <code>/cupons frete grátis</code>\n"
-    "• Toque em 'Ver oferta' ou 'Ver cupom' para ir direto ao link\n"
-    "• <b>Para buscar rápido:</b> deslize uma mensagem de menu (ou responda) "
-    "e digite o que deseja procurar! A lista será atualizada."
+    "• Você pode buscar pelo nome usando, por exemplo, "
+    "<code>/cupons frete grátis</code>\n\n"
+    
+    "🔎 <b>Busca rápida</b>\n"
+    "Deslize uma mensagem de menu (ou responda a ela) e digite o que "
+    "deseja procurar. A lista será atualizada automaticamente.\n\n"
+    
+    "🔗 <b>Links</b>\n"
+    "• Toque em <b>Ver oferta</b> para acessar uma oferta\n"
+    "• Toque em <b>Ver cupom</b> para acessar um cupom\n\n"
+    
+    "💬 <b>Suporte</b>\n"
+    "Use /contato para entrar em contato com o suporte."
 )
 
 TEXTO_CONTATO = f"📞 Precisa de ajuda? Fale com o suporte: {CONTATO_SUPORTE}"
@@ -324,7 +335,6 @@ def tratar_resposta_menu(msg, reply_to):
         logger.exception("Erro ao buscar (%s) via Reply, filtro=%r", tipo, filtro)
         editar_mensagem(chat_id, menu_message_id, MSG_ERRO_API, teclado_paginacao(tipo, 0, False, filtro))
     else:
-        # Edita a mensagem do menu original!
         editar_mensagem(
             chat_id,
             menu_message_id,
@@ -332,7 +342,6 @@ def tratar_resposta_menu(msg, reply_to):
             teclado_paginacao(tipo, 0, tem_proxima, filtro),
         )
 
-    # Limpa a mensagem que o usuário digitou (mantém o chat limpo)
     tg_request("deleteMessage", {"chat_id": chat_id, "message_id": msg["message_id"]})
 
 
