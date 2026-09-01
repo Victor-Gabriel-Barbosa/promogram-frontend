@@ -91,7 +91,7 @@ def montar_texto_produtos(produtos):
         return "Nenhuma oferta disponível no momento. Volte mais tarde! ⏳"
     linhas = ["🛍️ <b>Ofertas em destaque</b>\n"]
     for p in produtos:
-        linhas.append(f"💠 <b>{p.get('nome') or 'Produto'}</b>")
+        linhas.append(f"🔹 <b>{p.get('nome') or 'Produto'}</b>")
         preco_txt = formatar_preco(p.get("preco"))
         if p.get("preco_parcelado"):
             preco_txt += f" (ou parcelado {formatar_preco(p['preco_parcelado'])})"
@@ -114,7 +114,7 @@ def montar_texto_cupons(cupons):
 
 
 def adicionar_cupom_ao_texto(linhas, c):
-    linhas.append(f"💠 <b>{c.get('nome') or 'Cupom'}</b>")
+    linhas.append(f"🔹 <b>{c.get('nome') or 'Cupom'}</b>")
     if c.get("codigo"):
         linhas.append(f"Código: <code>{c['codigo']}</code>")
     if c.get("desconto"):
