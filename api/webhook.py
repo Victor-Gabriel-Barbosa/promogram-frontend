@@ -262,7 +262,9 @@ def texto_prompt_busca(tipo):
 def solicitar_busca(chat_id, tipo):
     """Envia o prompt com ForceReply. A resposta do usuário virá com
     'reply_to_message' apontando pra essa mensagem, o que nos dá o
-    message_id necessário pra editar e mostrar o resultado no lugar dela."""
+    message_id necessário pra apagá-la depois (o Telegram não permite
+    editar uma mensagem enviada com ForceReply) e mostrar o resultado
+    numa mensagem nova no lugar dela."""
     teclado = {
         "force_reply": True,
         "input_field_placeholder": "Digite o termo da busca...",
@@ -415,9 +417,13 @@ def tratar_callback(callback_query):
 
 def tratar_resposta_busca(msg, reply_to):
     """Chamado quando o usuário responde (reply) ao prompt de ForceReply.
-    O message_id capturado em reply_to é o da própria mensagem de prompt,
-    que é editada in-place com o resultado da busca - dando a impressão de
-    que o "menu" apenas foi atualizado."""
+    O message_id capturado em reply_to é o da própria mensagem de prompt.
+    O Telegram não permite editar uma mensagem que foi enviada com
+    ForceReply (editMessageText só aceita mensagens sem reply_markup ou
+    com teclado inline - tentar editar dá 'message can't be edited'), então
+    em vez de editar: apagamos o prompt e a resposta do usuário, e mandamos
+    uma mensagem nova com o resultado no lugar - o efeito visual pro usuário
+    é o mesmo, o "menu" parece ter sido atualizado."""
     chat_id = msg["chat"]["id"]
     prompt_message_id = reply_to["message_id"]
     tipo = tipo_do_prompt_busca(reply_to.get("text", ""))
@@ -432,18 +438,19 @@ def tratar_resposta_busca(msg, reply_to):
         itens, tem_proxima = buscar(0, nome=filtro)
     except requests.RequestException:
         logger.exception("Erro ao buscar (%s) via ForceReply, filtro=%r", tipo, filtro)
-        editar_mensagem(chat_id, prompt_message_id, MSG_ERRO_API, teclado_paginacao(tipo, 0, False, filtro))
+        enviar_mensagem(chat_id, MSG_ERRO_API, teclado_paginacao(tipo, 0, False, filtro))
     else:
-        editar_mensagem(
+        enviar_mensagem(
             chat_id,
-            prompt_message_id,
             montar_texto(itens, filtro),
             teclado_paginacao(tipo, 0, tem_proxima, filtro),
         )
 
-    # Apaga a mensagem com o termo digitado, mantendo só o "menu" atualizado
-    # (funciona em chats privados; em grupos sem permissão de admin falha
-    # silenciosamente, o que é tratado dentro de tg_request).
+    # Limpa o prompt e a mensagem com o termo digitado (o bot sempre pode
+    # apagar mensagens que ele mesmo enviou; em chats privados também pode
+    # apagar a mensagem recebida do usuário - em grupos sem permissão de
+    # admin isso falha silenciosamente, tratado dentro de tg_request).
+    tg_request("deleteMessage", {"chat_id": chat_id, "message_id": prompt_message_id})
     tg_request("deleteMessage", {"chat_id": chat_id, "message_id": msg["message_id"]})
 
 
