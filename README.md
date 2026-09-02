@@ -1,6 +1,9 @@
 <div align="center">
 
-# 🤖 Promogram Frontend
+<h1>
+  <img src="./images/logo.png" alt="Promogram Logo" width="40">
+  Promogram Frontend
+</h1>
 
 **Bot do Telegram que entrega as ofertas e cupons do Promogram para o usuário final**
 
