@@ -171,7 +171,7 @@ def montar_texto_produtos(produtos, filtro=None, preco_min=None, preco_max=None)
     for p in produtos:
         adicionar_produto_ao_texto(linhas, p)
         
-    linhas.append("💡 <i>Dica: Responda esta mensagem com o nome e/ou digite &lt; e &gt; seguido do preço!</i>")
+    linhas.append("💡 <i>Dica: Responda esta mensagem com o nome e/ou digite &lt; ou &gt; seguido do preço!</i>")
     
     return "\n".join(linhas)
 
@@ -336,14 +336,12 @@ def tratar_comando(chat_id, texto):
 
 
 def identificar_tipo_menu(texto):
-    """Analisa o texto da mensagem respondida para saber de qual menu se trata."""
     if "Ofertas" in texto or "Produto" in texto:
         return "produtos"
     return "cupons" if "Cupons" in texto or "Cupom" in texto else None
 
 
 def tratar_resposta_menu(msg, reply_to):
-    """Chamado quando o usuário responde diretamente a uma mensagem enviada pelo bot."""
     chat_id = msg["chat"]["id"]
     menu_message_id = reply_to["message_id"]
     texto_menu = reply_to.get("text", "")
@@ -475,7 +473,6 @@ def processar_update(update: dict):
             msg = update["message"]
             reply_to = msg.get("reply_to_message") or {}
             
-            # Se o usuário respondeu a uma mensagem que o bot enviou
             if reply_to.get("from", {}).get("is_bot") and reply_to.get("text"):
                 tratar_resposta_menu(msg, reply_to)
             elif msg["text"].startswith("/"):
