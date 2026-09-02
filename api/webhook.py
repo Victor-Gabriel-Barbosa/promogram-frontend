@@ -12,6 +12,8 @@ Variáveis de ambiente esperadas (configure no painel da Vercel):
   TELEGRAM_WEBHOOK_SECRET -> (recomendado fortemente) segredo para validar
                              que a chamada realmente veio do Telegram
 """
+
+import contextlib
 import hmac
 import html
 import json
@@ -147,18 +149,21 @@ def adicionar_produto_ao_texto(linhas, p):
 
 def montar_texto_produtos(produtos, filtro=None, preco_min=None, preco_max=None):
     if not produtos:
-        if filtro:
-            return f'Nenhuma oferta encontrada para "{html.escape(filtro)}". Tente outro termo! 🔎\n\n💡 <i>Dica: Responda esta mensagem para buscar novamente.</i>'
-        elif preco_min is not None or preco_max is not None:
-            return 'Nenhuma oferta encontrada nessa faixa de preço. Tente outro valor! 🔎\n\n💡 <i>Dica: Responda esta mensagem para buscar novamente.</i>'
+        if filtro or preco_min is not None or preco_max is not None:
+            return 'Nenhuma oferta encontrada para essa busca. Tente outros termos/valores! 🔎\n\n💡 <i>Dica: Responda esta mensagem para buscar novamente.</i>'
         return "Nenhuma oferta disponível no momento. Volte mais tarde! ⏳"
     
+    partes_titulo = []
     if filtro:
-        titulo = f'🛍️ <b>Ofertas - ({len(produtos)}) resultados para "{html.escape(filtro)}"</b>'
-    elif preco_min is not None:
-        titulo = f'🛍️ <b>Ofertas - Acima de {formatar_preco(preco_min)}</b>'
-    elif preco_max is not None:
-        titulo = f'🛍️ <b>Ofertas - Abaixo de {formatar_preco(preco_max)}</b>'
+        partes_titulo.append(f'"{html.escape(filtro)}"')
+    if preco_min is not None:
+        partes_titulo.append(f"acima de {formatar_preco(preco_min)}")
+    if preco_max is not None:
+        partes_titulo.append(f"abaixo de {formatar_preco(preco_max)}")
+        
+    if partes_titulo:
+        descricao = " e ".join(partes_titulo)
+        titulo = f'🛍️ <b>Ofertas - ({len(produtos)}) resultados para {descricao}</b>'
     else:
         titulo = "🛍️ <b>Ofertas em destaque</b>"
         
@@ -166,7 +171,7 @@ def montar_texto_produtos(produtos, filtro=None, preco_min=None, preco_max=None)
     for p in produtos:
         adicionar_produto_ao_texto(linhas, p)
         
-    linhas.append("💡 <i>Dica: Responda esta mensagem com o nome ou digite &lt; ou &gt; seguido do preço!</i>")
+    linhas.append("💡 <i>Dica: Responda esta mensagem com o nome e/ou digite &lt; e &gt; seguido do preço!</i>")
     
     return "\n".join(linhas)
 
@@ -206,19 +211,17 @@ def montar_texto_cupons(cupons, filtro=None):
 
 def _codificar_callback(tipo, skip, filtro=None, preco_min=None, preco_max=None):
     prefixo = f"{tipo}:{skip}"
-    payload = ""
+    partes = []
     
-    if preco_min is not None:
-        payload = f"p>{preco_min}"
-    elif preco_max is not None:
-        payload = f"p<{preco_max}"
-    elif filtro:
-        payload = f"n={filtro}"
-        
+    if preco_min is not None: partes.append(f"p>{preco_min}")
+    if preco_max is not None: partes.append(f"p<{preco_max}")
+    if filtro: partes.append(f"n={filtro}")
+    
+    payload = "|".join(partes)
     if not payload:
         return prefixo
         
-    quoted = urllib.parse.quote(payload, safe="=><")
+    quoted = urllib.parse.quote(payload, safe="=><|")
     espaco_disponivel = 64 - len(prefixo) - 1
     quoted = quoted[:max(espaco_disponivel, 0)]
     quoted = re.sub(r"%[0-9A-Fa-f]?$", "", quoted)
@@ -333,12 +336,14 @@ def tratar_comando(chat_id, texto):
 
 
 def identificar_tipo_menu(texto):
+    """Analisa o texto da mensagem respondida para saber de qual menu se trata."""
     if "Ofertas" in texto or "Produto" in texto:
         return "produtos"
     return "cupons" if "Cupons" in texto or "Cupom" in texto else None
 
 
 def tratar_resposta_menu(msg, reply_to):
+    """Chamado quando o usuário responde diretamente a uma mensagem enviada pelo bot."""
     chat_id = msg["chat"]["id"]
     menu_message_id = reply_to["message_id"]
     texto_menu = reply_to.get("text", "")
@@ -358,21 +363,19 @@ def tratar_resposta_menu(msg, reply_to):
     preco_max = None
 
     if tipo == "produtos" and texto_digitado:
-        match_menor = re.match(r"^<\s*([\d\.,]+)$", texto_digitado)
-        match_maior = re.match(r"^>\s*([\d\.,]+)$", texto_digitado)
-
-        if match_menor:
-            try: 
+        if match_menor := re.search(r"<\s*([\d\.,]+)", texto_digitado):
+            with contextlib.suppress(ValueError):
                 preco_max = float(match_menor[1].replace(",", "."))
-            except ValueError: 
-                pass
-        elif match_maior:
-            try: 
+            texto_digitado = texto_digitado[:match_menor.start()] + texto_digitado[match_menor.end():]
+
+        if match_maior := re.search(r">\s*([\d\.,]+)", texto_digitado):
+            with contextlib.suppress(ValueError):
                 preco_min = float(match_maior[1].replace(",", "."))
-            except ValueError: 
-                pass
-        else:
-            filtro = texto_digitado[:TAMANHO_MAX_FILTRO]
+            texto_digitado = texto_digitado[:match_maior.start()] + texto_digitado[match_maior.end():]
+
+        if filtro_limpo := texto_digitado.strip():
+            filtro = filtro_limpo[:TAMANHO_MAX_FILTRO]
+
     elif tipo == "cupons" and texto_digitado:
         filtro = texto_digitado[:TAMANHO_MAX_FILTRO]
 
@@ -430,16 +433,18 @@ def tratar_callback(callback_query):
     preco_min = None
     preco_max = None
     
-    if payload.startswith("p>"):
-        try: preco_min = float(payload[2:])
-        except ValueError: pass
-    elif payload.startswith("p<"):
-        try: preco_max = float(payload[2:])
-        except ValueError: pass
-    elif payload.startswith("n="):
-        filtro = payload[2:]
-    elif payload:
-        filtro = payload
+    if payload:
+        for p in payload.split("|"):
+            if p.startswith("p>"):
+                try: preco_min = float(p[2:])
+                except ValueError: pass
+            elif p.startswith("p<"):
+                try: preco_max = float(p[2:])
+                except ValueError: pass
+            elif p.startswith("n="):
+                filtro = p[2:]
+            elif "=" not in p and not p.startswith("p"): 
+                filtro = p
 
     try:
         if tipo == "produtos":
@@ -470,6 +475,7 @@ def processar_update(update: dict):
             msg = update["message"]
             reply_to = msg.get("reply_to_message") or {}
             
+            # Se o usuário respondeu a uma mensagem que o bot enviou
             if reply_to.get("from", {}).get("is_bot") and reply_to.get("text"):
                 tratar_resposta_menu(msg, reply_to)
             elif msg["text"].startswith("/"):
