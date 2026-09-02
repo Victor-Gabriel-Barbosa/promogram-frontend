@@ -166,7 +166,7 @@ def montar_texto_produtos(produtos, filtro=None, preco_min=None, preco_max=None)
     for p in produtos:
         adicionar_produto_ao_texto(linhas, p)
         
-    linhas.append("💡 <i>Dica: Responda esta mensagem com o nome ou digite < e > seguido do preço!</i>")
+    linhas.append("💡 <i>Dica: Responda esta mensagem com o nome ou digite &lt; e &gt; seguido do preço!</i>")
     
     return "\n".join(linhas)
 
