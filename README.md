@@ -107,9 +107,9 @@ Além dos comandos, todos os botões inline (menu, paginação, ajuda, contato) 
 ```
 promogram-frontend/
 ├── api/
-│   └── webhook.py       # função serverless: recebe updates do Telegram e responde
-├── requirements.txt      # dependências Python (essencialmente `requests`)
-├── vercel.json            # configuração de build/rotas da Vercel
+│   └── webhook.py    # função serverless: recebe updates do Telegram e responde
+├── requirements.txt  # dependências Python (essencialmente `requests`)
+├── vercel.json       # configuração de build/rotas da Vercel
 └── LICENSE
 ```
 
