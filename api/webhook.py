@@ -281,9 +281,11 @@ TEXTO_AJUDA = (
     "• Você pode buscar pelo nome usando, por exemplo, "
     "<code>/cupons frete grátis</code>\n\n"
     
-    "🔎 <b>Busca rápida</b>\n"
+    "🔎 <b>Busca rápida e Filtros</b>\n"
     "Deslize uma mensagem de menu (ou responda a ela) e digite o que "
-    "deseja procurar. A lista será atualizada automaticamente.\n\n"
+    "deseja procurar. A lista será atualizada automaticamente.\n"
+    "• <b>Filtro de preço (apenas Produtos):</b> Combine o nome do produto com <code>&lt;</code> (menor que) e <code>&gt;</code> (maior que).\n"
+    "• Exemplos: <code>celular &lt; 1500</code> ou <code>&gt; 100 camisa &lt; 200</code>\n\n"
     
     "🔗 <b>Links</b>\n"
     "• Toque em <b>Ver oferta</b> para acessar uma oferta\n"
