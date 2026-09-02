@@ -238,9 +238,9 @@ def teclado_menu_principal():
 
 
 TEXTO_START = (
-    "👋 <b>Olá! Seja bem-vindo ao Promogram!</b>\n\n"
-    "🛍️ Encontre ofertas e cupons em poucos cliques.\n\n"
-    "👇 O que você está procurando?"
+    "👋 <b>Bem-vindo ao Promogram!</b>\n\n"
+    "✨ As melhores ofertas e cupons, em um só lugar.\n\n"
+    "👇 <b>O que você procura?</b>"
 )
 
 TEXTO_AJUDA = (
