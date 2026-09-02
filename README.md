@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./images/logo.png" alt="Promogram Logo" width="200">
+<img src="./images/logo.png" alt="Promogram Logo" width="150">
 
 # Promogram Frontend
 
