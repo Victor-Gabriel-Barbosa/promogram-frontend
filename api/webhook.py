@@ -86,21 +86,25 @@ def responder_callback(callback_query_id, texto=None):
     return tg_request("answerCallbackQuery", payload)
 
 
-def _buscar_lote(endpoint, offset, limit, nome=None):
+def _buscar_lote(endpoint, offset, limit, nome=None, preco_min=None, preco_max=None):
     params = {"skip": offset, "limit": limit}
     if nome:
         params["nome"] = nome
+    if preco_min is not None:
+        params["preco_min"] = preco_min
+    if preco_max is not None:
+        params["preco_max"] = preco_max
     r = sessao.get(f"{API_BASE_URL}/{endpoint}", params=params, timeout=10)
     r.raise_for_status()
     return r.json()
 
 
-def _buscar_publicados_paginado(endpoint, skip, limit, nome=None):
+def _buscar_publicados_paginado(endpoint, skip, limit, nome=None, preco_min=None, preco_max=None):
     publicados = []
     offset = 0
     necessario = skip + limit + 1
     for _ in range(MAX_TENTATIVAS_PAGINACAO):
-        lote = _buscar_lote(endpoint, offset, LOTE_BRUTO, nome=nome)
+        lote = _buscar_lote(endpoint, offset, LOTE_BRUTO, nome=nome, preco_min=preco_min, preco_max=preco_max)
         if not lote:
             break
         publicados.extend(item for item in lote if item.get("publicado", True))
@@ -112,8 +116,8 @@ def _buscar_publicados_paginado(endpoint, skip, limit, nome=None):
     return pagina, tem_proxima
 
 
-def buscar_produtos(skip=0, limit=ITENS_POR_PAGINA, nome=None):
-    return _buscar_publicados_paginado("produtos", skip, limit, nome=nome)
+def buscar_produtos(skip=0, limit=ITENS_POR_PAGINA, nome=None, preco_min=None, preco_max=None):
+    return _buscar_publicados_paginado("produtos", skip, limit, nome=nome, preco_min=preco_min, preco_max=preco_max)
 
 
 def buscar_cupons(skip=0, limit=ITENS_POR_PAGINA, nome=None):
@@ -141,14 +145,20 @@ def adicionar_produto_ao_texto(linhas, p):
     linhas.append("")
 
 
-def montar_texto_produtos(produtos, filtro=None):
+def montar_texto_produtos(produtos, filtro=None, preco_min=None, preco_max=None):
     if not produtos:
         if filtro:
             return f'Nenhuma oferta encontrada para "{html.escape(filtro)}". Tente outro termo! 🔎\n\n💡 <i>Dica: Responda esta mensagem para buscar novamente.</i>'
+        elif preco_min is not None or preco_max is not None:
+            return 'Nenhuma oferta encontrada nessa faixa de preço. Tente outro valor! 🔎\n\n💡 <i>Dica: Responda esta mensagem para buscar novamente.</i>'
         return "Nenhuma oferta disponível no momento. Volte mais tarde! ⏳"
     
     if filtro:
         titulo = f'🛍️ <b>Ofertas - ({len(produtos)}) resultados para "{html.escape(filtro)}"</b>'
+    elif preco_min is not None:
+        titulo = f'🛍️ <b>Ofertas - Acima de {formatar_preco(preco_min)}</b>'
+    elif preco_max is not None:
+        titulo = f'🛍️ <b>Ofertas - Abaixo de {formatar_preco(preco_max)}</b>'
     else:
         titulo = "🛍️ <b>Ofertas em destaque</b>"
         
@@ -156,7 +166,7 @@ def montar_texto_produtos(produtos, filtro=None):
     for p in produtos:
         adicionar_produto_ao_texto(linhas, p)
         
-    linhas.append("💡 <i>Dica: Responda esta mensagem com o nome do produto para buscar!</i>")
+    linhas.append("💡 <i>Dica: Responda esta mensagem com o nome ou digite < e > seguido do preço!</i>")
     
     return "\n".join(linhas)
 
@@ -194,31 +204,41 @@ def montar_texto_cupons(cupons, filtro=None):
     return "\n".join(linhas)
 
 
-def _codificar_callback(tipo, skip, filtro=None):
+def _codificar_callback(tipo, skip, filtro=None, preco_min=None, preco_max=None):
     prefixo = f"{tipo}:{skip}"
-    if not filtro:
+    payload = ""
+    
+    if preco_min is not None:
+        payload = f"p>{preco_min}"
+    elif preco_max is not None:
+        payload = f"p<{preco_max}"
+    elif filtro:
+        payload = f"n={filtro}"
+        
+    if not payload:
         return prefixo
-    quoted = urllib.parse.quote(filtro, safe="")
+        
+    quoted = urllib.parse.quote(payload, safe="=><")
     espaco_disponivel = 64 - len(prefixo) - 1
     quoted = quoted[:max(espaco_disponivel, 0)]
     quoted = re.sub(r"%[0-9A-Fa-f]?$", "", quoted)
-    return f"{prefixo}:{quoted}" if quoted else prefixo
+    return f"{prefixo}:{quoted}"
 
 
-def teclado_paginacao(tipo, skip, tem_proxima, filtro=None):
+def teclado_paginacao(tipo, skip, tem_proxima, filtro=None, preco_min=None, preco_max=None):
     nav = []
     if skip > 0:
         nav.append(
             {
                 "text": "❮ Anterior",
-                "callback_data": _codificar_callback(tipo, max(0, skip - ITENS_POR_PAGINA), filtro),
+                "callback_data": _codificar_callback(tipo, max(0, skip - ITENS_POR_PAGINA), filtro, preco_min, preco_max),
             }
         )
     if tem_proxima:
         nav.append(
             {
                 "text": "Próximo ❯",
-                "callback_data": _codificar_callback(tipo, skip + ITENS_POR_PAGINA, filtro),
+                "callback_data": _codificar_callback(tipo, skip + ITENS_POR_PAGINA, filtro, preco_min, preco_max),
             }
         )
     linhas_botoes = [nav] if nav else []
@@ -334,23 +354,45 @@ def tratar_resposta_menu(msg, reply_to):
         return
 
     texto_digitado = (msg.get("text") or "").strip()
-    filtro = texto_digitado[:TAMANHO_MAX_FILTRO] if texto_digitado else None
 
-    buscar = buscar_produtos if tipo == "produtos" else buscar_cupons
-    montar_texto = montar_texto_produtos if tipo == "produtos" else montar_texto_cupons
+    filtro = None
+    preco_min = None
+    preco_max = None
+
+    if tipo == "produtos" and texto_digitado:
+        match_menor = re.match(r"^<\s*([\d\.,]+)$", texto_digitado)
+        match_maior = re.match(r"^>\s*([\d\.,]+)$", texto_digitado)
+
+        if match_menor:
+            try: 
+                preco_max = float(match_menor[1].replace(",", "."))
+            except ValueError: 
+                pass
+        elif match_maior:
+            try: 
+                preco_min = float(match_maior[1].replace(",", "."))
+            except ValueError: 
+                pass
+        else:
+            filtro = texto_digitado[:TAMANHO_MAX_FILTRO]
+    elif tipo == "cupons" and texto_digitado:
+        filtro = texto_digitado[:TAMANHO_MAX_FILTRO]
 
     try:
-        itens, tem_proxima = buscar(0, nome=filtro)
+        if tipo == "produtos":
+            itens, tem_proxima = buscar_produtos(0, nome=filtro, preco_min=preco_min, preco_max=preco_max)
+            texto_montado = montar_texto_produtos(itens, filtro=filtro, preco_min=preco_min, preco_max=preco_max)
+            teclado = teclado_paginacao("produtos", 0, tem_proxima, filtro=filtro, preco_min=preco_min, preco_max=preco_max)
+        else:
+            itens, tem_proxima = buscar_cupons(0, nome=filtro)
+            texto_montado = montar_texto_cupons(itens, filtro)
+            teclado = teclado_paginacao("cupons", 0, tem_proxima, filtro)
+
     except requests.RequestException:
-        logger.exception("Erro ao buscar (%s) via Reply, filtro=%r", tipo, filtro)
+        logger.exception("Erro ao buscar (%s) via Reply", tipo)
         editar_mensagem(chat_id, menu_message_id, MSG_ERRO_API, teclado_paginacao(tipo, 0, False, filtro))
     else:
-        editar_mensagem(
-            chat_id,
-            menu_message_id,
-            montar_texto(itens, filtro),
-            teclado_paginacao(tipo, 0, tem_proxima, filtro),
-        )
+        editar_mensagem(chat_id, menu_message_id, texto_montado, teclado)
 
     tg_request("deleteMessage", {"chat_id": chat_id, "message_id": msg["message_id"]})
 
@@ -366,22 +408,13 @@ def tratar_callback(callback_query):
     data = callback_query.get("data", "")
     callback_id = callback_query["id"]
 
-    if data == "menu":
-        editar_mensagem(chat_id, message_id, TEXTO_START, teclado_menu_principal())
-        responder_callback(callback_id)
-        return
-    if data == "ajuda":
-        editar_mensagem(
-            chat_id, message_id, TEXTO_AJUDA,
-            {"inline_keyboard": [[{"text": "◀️ Menu", "callback_data": "menu"}]]},
-        )
-        responder_callback(callback_id)
-        return
-    if data == "contato":
-        editar_mensagem(
-            chat_id, message_id, TEXTO_CONTATO,
-            {"inline_keyboard": [[{"text": "◀️ Menu", "callback_data": "menu"}]]},
-        )
+    if data in ("menu", "ajuda", "contato"):
+        if data == "menu":
+            editar_mensagem(chat_id, message_id, TEXTO_START, teclado_menu_principal())
+        elif data == "ajuda":
+            editar_mensagem(chat_id, message_id, TEXTO_AJUDA, {"inline_keyboard": [[{"text": "◀️ Menu", "callback_data": "menu"}]]})
+        elif data == "contato":
+            editar_mensagem(chat_id, message_id, TEXTO_CONTATO, {"inline_keyboard": [[{"text": "◀️ Menu", "callback_data": "menu"}]]})
         responder_callback(callback_id)
         return
 
@@ -389,19 +422,39 @@ def tratar_callback(callback_query):
     tipo = partes[0]
     skip_str = partes[1] if len(partes) > 1 else "0"
     skip = int(skip_str) if skip_str.isdigit() else 0
-    filtro = urllib.parse.unquote(partes[2]) if len(partes) > 2 and partes[2] else None
+    payload = urllib.parse.unquote(partes[2]) if len(partes) > 2 and partes[2] else ""
 
     if tipo not in ("produtos", "cupons"):
         responder_callback(callback_id)
         return
 
-    buscar = buscar_produtos if tipo == "produtos" else buscar_cupons
-    montar_texto = montar_texto_produtos if tipo == "produtos" else montar_texto_cupons
+    filtro = None
+    preco_min = None
+    preco_max = None
+    
+    if payload.startswith("p>"):
+        try: preco_min = float(payload[2:])
+        except ValueError: pass
+    elif payload.startswith("p<"):
+        try: preco_max = float(payload[2:])
+        except ValueError: pass
+    elif payload.startswith("n="):
+        filtro = payload[2:]
+    elif payload:
+        filtro = payload
 
     try:
-        itens, tem_proxima = buscar(skip, nome=filtro)
+        if tipo == "produtos":
+            itens, tem_proxima = buscar_produtos(skip, nome=filtro, preco_min=preco_min, preco_max=preco_max)
+            texto_montado = montar_texto_produtos(itens, filtro=filtro, preco_min=preco_min, preco_max=preco_max)
+            teclado = teclado_paginacao("produtos", skip, tem_proxima, filtro=filtro, preco_min=preco_min, preco_max=preco_max)
+        else:
+            itens, tem_proxima = buscar_cupons(skip, nome=filtro)
+            texto_montado = montar_texto_cupons(itens, filtro)
+            teclado = teclado_paginacao("cupons", skip, tem_proxima, filtro)
+            
     except requests.RequestException:
-        logger.exception("Erro ao paginar %s (skip=%s, filtro=%r)", tipo, skip, filtro)
+        logger.exception("Erro ao paginar %s", tipo)
         responder_callback(callback_id, "Erro ao buscar dados, tente novamente.")
         return
 
@@ -409,12 +462,7 @@ def tratar_callback(callback_query):
         responder_callback(callback_id, "Não há mais itens para mostrar.")
         return
 
-    editar_mensagem(
-        chat_id,
-        message_id,
-        montar_texto(itens, filtro),
-        teclado_paginacao(tipo, skip, tem_proxima, filtro),
-    )
+    editar_mensagem(chat_id, message_id, texto_montado, teclado)
     responder_callback(callback_id)
 
 
