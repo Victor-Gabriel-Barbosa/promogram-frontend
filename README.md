@@ -1,9 +1,8 @@
 <div align="center">
 
-<h1>
-  <img src="./images/logo.png" alt="Promogram Logo" width="40">
-  Promogram Frontend
-</h1>
+<img src="./images/logo.png" alt="Promogram Logo" width="200">
+
+# Promogram Frontend
 
 **Bot do Telegram que entrega as ofertas e cupons do Promogram para o usuário final**
 
@@ -54,29 +53,33 @@ sequenceDiagram
     participant T as Telegram
     participant W as api/webhook.py (Vercel)
     participant A as Promogram Backend (API)
+    participant S as Supabase (PostgreSQL)
 
-    U->>T: Envia /produtos (ou toca em um botão)
+    U->>T: Envia /produtos (ou toca em um botão / responde a um menu)
     T->>W: POST /api/webhook (update)
-    W->>A: GET /produtos
-    A-->>W: Lista de produtos publicados
+    W->>A: GET /produtos (com filtro opcional por nome)
+    A->>S: Consulta produtos/cupons no banco
+    S-->>A: Registros armazenados
+    A-->>W: Lista de produtos
     W->>T: sendMessage / editMessageText + teclado inline
     T-->>U: Exibe as ofertas com botões de navegação
 ```
 
 1. O Telegram envia cada mensagem/clique de botão (*update*) via `POST` para `/api/webhook`.
 2. A função valida opcionalmente um segredo (`TELEGRAM_WEBHOOK_SECRET`) para confirmar que a chamada veio do Telegram.
-3. O comando ou o botão pressionado é interpretado (`/produtos`, `/cupons`, navegação de página, menu, etc.).
-4. Quando necessário, a função busca dados na API do **Promogram Backend** (`GET /produtos` ou `GET /cupons`), filtrando apenas itens `publicado: true`.
+3. O comando, o botão pressionado ou a resposta (reply) a um menu é interpretado (`/produtos`, `/cupons`, busca por nome, navegação de página, menu, etc.).
+4. Quando necessário, a função busca dados na API do **Promogram Backend** (`GET /produtos` ou `GET /cupons`, com suporte a busca por nome via parâmetro `nome`), que por sua vez consulta os dados armazenados no **Supabase**; a função filtra apenas itens `publicado: true` antes de paginar o resultado.
 5. A resposta é formatada em HTML e enviada de volta ao usuário via `sendMessage`/`editMessageText`, com teclado inline de navegação.
 6. Por ser serverless, a função só é executada sob demanda — não há processo rodando continuamente.
 
 ## ✨ Funcionalidades
 
 - Menu principal com botões inline (Produtos, Cupons, Ajuda, Contato).
-- Listagem de **produtos** e **cupons** com paginação (5 itens por página, botões "❮ Anterior" / "Próximo ❯").
+- Listagem de **produtos** e **cupons** com paginação (5 itens por página, botões "❮ Anterior" / "Próximo ❯"), preservando o filtro de busca ao navegar entre páginas.
+- **Busca por nome**, de duas formas: enviando o termo junto do comando (`/produtos tênis`) ou respondendo a uma mensagem de menu já enviada pelo bot com o termo desejado — nesse segundo caso, a mensagem de resposta do usuário é apagada automaticamente para manter o chat limpo.
 - Edição da própria mensagem ao navegar entre páginas (`editMessageText`), sem poluir o chat com mensagens novas.
 - Formatação de preço em real (`R$ 0,00`), incluindo opção parcelada quando disponível.
-- Validação opcional do segredo do webhook (`X-Telegram-Bot-Api-Secret-Token`).
+- Validação opcional do segredo do webhook (`X-Telegram-Bot-Api-Secret-Token`), comparado de forma segura (resistente a timing attacks).
 - Tratamento de erros que nunca derruba a função — falhas são apenas logadas.
 - Endpoint `GET` de health check (`{"status": "bot ativo"}`) para verificar se o deploy está no ar.
 - Implementado sem framework (usa `BaseHTTPRequestHandler` puro), reduzindo dependências e o tempo de cold start na Vercel.
@@ -86,12 +89,12 @@ sequenceDiagram
 | Comando | Descrição |
 |---|---|
 | `/start` | Exibe a mensagem de boas-vindas e o menu principal |
-| `/produtos` | Lista as ofertas cadastradas, com paginação |
-| `/cupons` | Lista os cupons cadastrados, com paginação |
+| `/produtos [termo]` | Lista as ofertas cadastradas, com paginação. Se um termo for informado (ex.: `/produtos tênis`), filtra pelo nome |
+| `/cupons [termo]` | Lista os cupons cadastrados, com paginação. Se um termo for informado (ex.: `/cupons frete grátis`), filtra pelo nome |
 | `/ajuda` | Explica como o bot funciona |
 | `/contato` | Mostra o contato de suporte configurado |
 
-Além dos comandos, todos os botões inline (menu, paginação, ajuda, contato) são tratados via `callback_query`.
+Além dos comandos, todos os botões inline (menu, paginação, ajuda, contato) são tratados via `callback_query`. Também é possível buscar respondendo diretamente a uma mensagem de menu (Produtos ou Cupons) com o termo desejado.
 
 ## 🧱 Tecnologias
 
@@ -101,15 +104,16 @@ Além dos comandos, todos os botões inline (menu, paginação, ajuda, contato) 
 | Handler HTTP | `http.server.BaseHTTPRequestHandler` (biblioteca padrão do Python) |
 | Integração com o Telegram | [Telegram Bot API](https://core.telegram.org/bots/api) via `requests` |
 | Integração com o backend | HTTP/JSON contra a API do [promogram-backend](https://github.com/Victor-Gabriel-Barbosa/promogram-backend) |
+| Persistência de dados *(no backend)* | [Supabase](https://supabase.com/) (PostgreSQL) — acessado apenas pelo promogram-backend, não diretamente por este repositório |
 
 ## 📁 Estrutura do projeto
 
 ```
 promogram-frontend/
 ├── api/
-│   └── webhook.py    # função serverless: recebe updates do Telegram e responde
-├── requirements.txt  # dependências Python (essencialmente `requests`)
-├── vercel.json       # configuração de build/rotas da Vercel
+│   └── webhook.py       # função serverless: recebe updates do Telegram e responde
+├── requirements.txt      # dependências Python (essencialmente `requests`)
+├── vercel.json            # configuração de build/rotas da Vercel
 └── LICENSE
 ```
 
@@ -118,7 +122,7 @@ promogram-frontend/
 - Python 3.9 ou superior (versão suportada pelo runtime `@vercel/python`).
 - Uma conta na [Vercel](https://vercel.com/) para o deploy.
 - Um bot criado com o [@BotFather](https://t.me/BotFather) no Telegram, com o respectivo token.
-- A [API do Promogram Backend](https://github.com/Victor-Gabriel-Barbosa/promogram-backend) publicada e acessível publicamente.
+- A [API do Promogram Backend](https://github.com/Victor-Gabriel-Barbosa/promogram-backend) publicada e acessível publicamente, já conectada ao seu banco de dados no Supabase.
 
 ## 🚀 Instalação
 
@@ -218,8 +222,10 @@ O repositório já mantém uma instância publicada em `promogram-frontend.verce
 Este bot depende inteiramente da API do **[promogram-backend](https://github.com/Victor-Gabriel-Barbosa/promogram-backend)**, que é responsável por:
 
 - Raspar ofertas e cupons de grupos do Telegram (via Telethon).
-- Armazená-los em PostgreSQL.
-- Expô-los através dos endpoints `GET /produtos` e `GET /cupons`, consumidos por este frontend.
+- Armazená-los em um banco PostgreSQL hospedado no **[Supabase](https://supabase.com/)**.
+- Expô-los através dos endpoints `GET /produtos` e `GET /cupons` (com paginação via `skip`/`limit` e busca por `nome`), consumidos por este frontend.
+
+> **Nota:** este repositório (o "frontend") **não se conecta ao Supabase diretamente**. Toda a comunicação com o banco de dados é feita pelo promogram-backend; o `api/webhook.py` apenas consome a API HTTP dele através da variável `API_BASE_URL`.
 
 ## 📄 Licença
 
