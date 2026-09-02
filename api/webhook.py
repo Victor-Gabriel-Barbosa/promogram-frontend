@@ -239,7 +239,7 @@ def teclado_menu_principal():
 
 TEXTO_START = (
     "👋 <b>Bem-vindo ao Promogram!</b>\n\n"
-    "✨ As melhores ofertas e cupons, em um só lugar.\n\n"
+    "⭐ As melhores ofertas e cupons.\n\n"
     "👇 <b>O que você procura?</b>"
 )
 
