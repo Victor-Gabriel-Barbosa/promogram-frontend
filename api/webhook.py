@@ -333,14 +333,12 @@ def tratar_comando(chat_id, texto):
 
 
 def identificar_tipo_menu(texto):
-    """Analisa o texto da mensagem respondida para saber de qual menu se trata."""
     if "Ofertas" in texto or "Produto" in texto:
         return "produtos"
     return "cupons" if "Cupons" in texto or "Cupom" in texto else None
 
 
 def tratar_resposta_menu(msg, reply_to):
-    """Chamado quando o usuário responde diretamente a uma mensagem enviada pelo bot."""
     chat_id = msg["chat"]["id"]
     menu_message_id = reply_to["message_id"]
     texto_menu = reply_to.get("text", "")
@@ -354,23 +352,23 @@ def tratar_resposta_menu(msg, reply_to):
         return
 
     texto_digitado = (msg.get("text") or "").strip()
-    
+
     filtro = None
     preco_min = None
     preco_max = None
-    
+
     if tipo == "produtos" and texto_digitado:
         match_menor = re.match(r"^<\s*([\d\.,]+)$", texto_digitado)
         match_maior = re.match(r"^>\s*([\d\.,]+)$", texto_digitado)
-        
+
         if match_menor:
             try: 
-                preco_max = float(match_menor.group(1).replace(",", "."))
+                preco_max = float(match_menor[1].replace(",", "."))
             except ValueError: 
                 pass
         elif match_maior:
             try: 
-                preco_min = float(match_maior.group(1).replace(",", "."))
+                preco_min = float(match_maior[1].replace(",", "."))
             except ValueError: 
                 pass
         else:
@@ -387,7 +385,7 @@ def tratar_resposta_menu(msg, reply_to):
             itens, tem_proxima = buscar_cupons(0, nome=filtro)
             texto_montado = montar_texto_cupons(itens, filtro)
             teclado = teclado_paginacao("cupons", 0, tem_proxima, filtro)
-            
+
     except requests.RequestException:
         logger.exception("Erro ao buscar (%s) via Reply", tipo)
         editar_mensagem(chat_id, menu_message_id, MSG_ERRO_API, teclado_paginacao(tipo, 0, False, filtro))
@@ -472,7 +470,6 @@ def processar_update(update: dict):
             msg = update["message"]
             reply_to = msg.get("reply_to_message") or {}
             
-            # Se o usuário respondeu a uma mensagem que o bot enviou
             if reply_to.get("from", {}).get("is_bot") and reply_to.get("text"):
                 tratar_resposta_menu(msg, reply_to)
             elif msg["text"].startswith("/"):
