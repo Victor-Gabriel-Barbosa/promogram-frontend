@@ -86,8 +86,8 @@ def responder_callback(callback_query_id, texto=None):
     return tg_request("answerCallbackQuery", payload)
 
 
-def _buscar_raw(endpoint, skip, limit, nome=None):
-    params = {"skip": skip, "limit": limit}
+def _buscar_lote(endpoint, offset, limit, nome=None):
+    params = {"skip": offset, "limit": limit}
     if nome:
         params["nome"] = nome
     r = sessao.get(f"{API_BASE_URL}/{endpoint}", params=params, timeout=10)
@@ -97,14 +97,14 @@ def _buscar_raw(endpoint, skip, limit, nome=None):
 
 def _buscar_publicados_paginado(endpoint, skip, limit, nome=None):
     publicados = []
-    raw_skip = 0
+    offset = 0
     necessario = skip + limit + 1
     for _ in range(MAX_TENTATIVAS_PAGINACAO):
-        lote = _buscar_raw(endpoint, raw_skip, LOTE_BRUTO, nome=nome)
+        lote = _buscar_lote(endpoint, offset, LOTE_BRUTO, nome=nome)
         if not lote:
             break
         publicados.extend(item for item in lote if item.get("publicado", True))
-        raw_skip += LOTE_BRUTO
+        offset += LOTE_BRUTO
         if len(lote) < LOTE_BRUTO or len(publicados) >= necessario:
             break
     pagina = publicados[skip:skip + limit]
